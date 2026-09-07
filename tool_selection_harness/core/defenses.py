@@ -29,3 +29,27 @@ class Detector(Protocol):
     def score(self, doc: ToolDocument) -> float:
         """Return a suspicion score for ``doc`` (higher = more suspicious)."""
         ...
+
+
+class _LocalLMDetectorBase:
+    """Shared lazy loading + per-token NLL for local causal-LM detectors."""
+
+    def __init__(self, model_name: str = "gpt2") -> None:
+        self.model_name = model_name
+        self._tokenizer = None
+        self._model = None
+
+    def _load(self):
+        """Load tokenizer + model on first use (lazy import)."""
+        if self._model is None:
+            try:
+                from transformers import AutoModelForCausalLM, AutoTokenizer
+            except ImportError as exc:  # pragma: no cover - depends on env
+                raise ImportError(
+                    "This detector requires the 'transformers' and 'torch' "
+                    "packages. Install with `pip install transformers torch`."
+                ) from exc
+            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            self._model = AutoModelForCausalLM.from_pretrained(self.model_name)
+            self._model.eval()
+        return self._tokenizer, self._model
