@@ -82,3 +82,21 @@ class _LocalLMDetectorBase:
             reduction="none",
         )
         return nll.detach().cpu().numpy().astype(np.float64)
+
+
+class PerplexityDetector(_LocalLMDetectorBase):
+    """Score documents by description perplexity (PPL) under a local LM.
+
+    Computes the average token negative log-likelihood (NLL) of the
+    ``tool_description`` under a causal language model (default: gpt2).
+    Unusual or incoherent descriptions tend to receive higher NLL, making
+    this a simple baseline anomaly score (cf. Jain et al., the paper's PPL
+    detection). The model is loaded lazily on the first call.
+    """
+
+    def score(self, doc: ToolDocument) -> float:
+        """Return mean token NLL of ``doc.tool_description``."""
+        nlls = self._token_nlls(doc.tool_description)
+        if nlls.size == 0:
+            return 0.0
+        return float(nlls.mean())
