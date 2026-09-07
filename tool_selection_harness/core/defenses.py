@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+import numpy as np
+
 
 @runtime_checkable
 class Detector(Protocol):
@@ -53,3 +55,30 @@ class _LocalLMDetectorBase:
             self._model = AutoModelForCausalLM.from_pretrained(self.model_name)
             self._model.eval()
         return self._tokenizer, self._model
+
+    def _token_nlls(self, text: str) -> np.ndarray:
+        """Per-token negative log-likelihood of ``text`` under the LM."""
+        try:
+            import torch
+            import torch.nn.functional as F
+        except ImportError as exc:  # pragma: no cover - depends on env
+            raise ImportError(
+                "This detector requires 'torch'. Install with "
+                "`pip install torch`."
+            ) from exc
+
+        tokenizer, model = self._load()
+        inputs = tokenizer(text, return_tensors="pt")
+        input_ids = inputs["input_ids"]
+        if input_ids.shape[-1] < 2:
+            return np.zeros(0, dtype=np.float64)
+        with torch.no_grad():
+            logits = model(input_ids=input_ids).logits
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = input_ids[..., 1:].contiguous()
+        nll = F.cross_entropy(
+            shift_logits.view(-1, shift_logits.shape[-1]),
+            shift_labels.view(-1),
+            reduction="none",
+        )
+        return nll.detach().cpu().numpy().astype(np.float64)
