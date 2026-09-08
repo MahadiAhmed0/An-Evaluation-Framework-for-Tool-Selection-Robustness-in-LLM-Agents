@@ -124,6 +124,8 @@ class PerplexityWindowedDetector(_LocalLMDetectorBase):
         nlls = self._token_nlls(doc.tool_description)
         if nlls.size == 0:
             return 0.0
+        if nlls.size <= self.window_size:
+            return float(nlls.mean())
         windows = [
             nlls[i : i + self.window_size]
             for i in range(nlls.size - self.window_size + 1)
