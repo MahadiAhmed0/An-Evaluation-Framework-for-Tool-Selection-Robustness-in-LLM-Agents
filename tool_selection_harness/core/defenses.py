@@ -184,6 +184,25 @@ class ThresholdClassifier:
         self.detector = detector
         self.threshold = threshold
 
+    def fit_threshold(self, scores: List[float], target_fpr: float) -> float:
+        """Calibrate the threshold from known-benign scores.
+
+        Args:
+            scores: Detector scores over a calibration set of known-benign
+                documents.
+            target_fpr: Desired false positive rate on the calibration set
+                (fraction of benign documents flagged).
+
+        Returns:
+            The fitted threshold, also stored on the instance.
+        """
+        if not scores:
+            raise ValueError("scores must not be empty")
+        if not 0.0 <= target_fpr <= 1.0:
+            raise ValueError(f"target_fpr must be in [0, 1], got {target_fpr}")
+        self.threshold = _threshold_for_fpr(scores, target_fpr)
+        return self.threshold
+
     def classify(self, doc: ToolDocument) -> bool:
         """Return True when ``doc`` is flagged as suspicious."""
         if self.detector is None:
@@ -194,3 +213,13 @@ class ThresholdClassifier:
         if self.threshold is None:
             raise RuntimeError("Threshold not set; call fit_threshold first.")
         return self.detector.score(doc) > self.threshold
+
+
+def _threshold_for_fpr(scores: List[float], target_fpr: float) -> float:
+    """Empirical (1 - fpr) quantile of benign scores, with edge handling."""
+    arr = np.asarray(scores, dtype=np.float64)
+    if target_fpr <= 0.0:
+        return float(np.nextafter(arr.max(), np.inf))
+    if target_fpr >= 1.0:
+        return float(np.nextafter(arr.min(), -np.inf))
+    return float(np.quantile(arr, 1.0 - target_fpr))
