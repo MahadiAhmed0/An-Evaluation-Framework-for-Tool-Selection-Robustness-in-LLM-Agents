@@ -102,3 +102,30 @@ class PerplexityDetector(_LocalLMDetectorBase):
         if nlls.size == 0:
             return 0.0
         return float(nlls.mean())
+
+
+class PerplexityWindowedDetector(_LocalLMDetectorBase):
+    """Windowed perplexity (PPL-W) detector.
+
+    Like :class:`PerplexityDetector`, but scores by the *maximum* mean NLL
+    over contiguous token windows of the description (sliding windows of
+    ``window_size`` tokens). If any window is anomalous, the document is
+    suspicious -- matching the paper's PPL-W defense.
+    """
+
+    def __init__(self, model_name: str = "gpt2", window_size: int = 5) -> None:
+        super().__init__(model_name=model_name)
+        if window_size < 1:
+            raise ValueError(f"window_size must be >= 1, got {window_size}")
+        self.window_size = window_size
+
+    def score(self, doc: ToolDocument) -> float:
+        """Return the max mean token NLL over windows of the description."""
+        nlls = self._token_nlls(doc.tool_description)
+        if nlls.size == 0:
+            return 0.0
+        windows = [
+            nlls[i : i + self.window_size]
+            for i in range(nlls.size - self.window_size + 1)
+        ]
+        return float(max(window.mean() for window in windows))
