@@ -19,6 +19,8 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
+from tool_selection_harness.core.tool_document import ToolDocument
+
 
 @runtime_checkable
 class Detector(Protocol):
