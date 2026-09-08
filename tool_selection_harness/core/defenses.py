@@ -15,7 +15,7 @@ does not generate attacks.
 
 from __future__ import annotations
 
-from typing import Callable, Protocol, runtime_checkable
+from typing import Callable, List, Optional, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -158,3 +158,39 @@ class KnownAnswerDetector:
         )
         response = self.llm_call(text)
         return 0.0 if self.secret.lower() in response.lower() else 1.0
+
+
+class ThresholdClassifier:
+    """Binary flagging based on a calibrated score threshold.
+
+    ``fit_threshold`` calibrates the threshold from scores of known-benign
+    documents so that approximately ``target_fpr`` of benign documents would
+    be flagged (the paper's dataset-adaptive strategy). ``classify`` flags a
+    document when its detector score exceeds the threshold.
+
+    Args:
+        detector: Optional detector used by :meth:`classify` to score
+            documents. If omitted, only the threshold-fitting half is
+            usable.
+        threshold: Optional pre-set threshold (e.g., loaded from a previous
+            calibration).
+    """
+
+    def __init__(
+        self,
+        detector: Optional[Detector] = None,
+        threshold: Optional[float] = None,
+    ) -> None:
+        self.detector = detector
+        self.threshold = threshold
+
+    def classify(self, doc: ToolDocument) -> bool:
+        """Return True when ``doc`` is flagged as suspicious."""
+        if self.detector is None:
+            raise RuntimeError(
+                "ThresholdClassifier has no detector; construct with "
+                "ThresholdClassifier(detector=...)"
+            )
+        if self.threshold is None:
+            raise RuntimeError("Threshold not set; call fit_threshold first.")
+        return self.detector.score(doc) > self.threshold
