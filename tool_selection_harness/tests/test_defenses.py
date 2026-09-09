@@ -133,3 +133,20 @@ def test_windowed_detector_short_text_uses_single_window(stub_transformers) -> N
 def test_windowed_detector_rejects_bad_window_size() -> None:
     with pytest.raises(ValueError):
         PerplexityWindowedDetector(window_size=0)
+
+
+# -- KnownAnswerDetector -----------------------------------------------------------
+
+
+def test_known_answer_detector_accepts_secret_response() -> None:
+    def llm_call(prompt: str) -> str:
+        assert "Hello World!" in prompt
+        return "Hello World!"
+
+    detector = KnownAnswerDetector(llm_call=llm_call)
+    assert detector.score(ToolDocument("t", "d")) == 0.0
+
+
+def test_known_answer_detector_flags_broken_response() -> None:
+    detector = KnownAnswerDetector(llm_call=lambda prompt: "Some other output")
+    assert detector.score(ToolDocument("t", "d")) == 1.0
