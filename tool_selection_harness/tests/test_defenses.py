@@ -107,3 +107,29 @@ def test_perplexity_detector_uses_description_not_name(stub_transformers) -> Non
 def test_perplexity_detector_single_token_is_zero(stub_transformers) -> None:
     detector = PerplexityDetector()
     assert detector.score(ToolDocument("tool", "xyz")) == 0.0
+
+
+# -- PerplexityWindowedDetector ---------------------------------------------------
+
+
+def test_windowed_detector_returns_max_window_mean(stub_transformers) -> None:
+    detector = PerplexityWindowedDetector(window_size=1)
+    doc = ToolDocument("tool", "ab cd xyz")  # NLLs [2.0, 3.0] -> max 3.0
+    assert detector.score(doc) == pytest.approx(3.0)
+
+
+def test_windowed_detector_windows_average(stub_transformers) -> None:
+    detector = PerplexityWindowedDetector(window_size=2)
+    doc = ToolDocument("tool", "ab cd xyz")  # windows [2,3] -> max 2.5
+    assert detector.score(doc) == pytest.approx(2.5)
+
+
+def test_windowed_detector_short_text_uses_single_window(stub_transformers) -> None:
+    detector = PerplexityWindowedDetector(window_size=5)
+    doc = ToolDocument("tool", "ab cd")  # fewer tokens than window
+    assert detector.score(doc) == pytest.approx(2.0)
+
+
+def test_windowed_detector_rejects_bad_window_size() -> None:
+    with pytest.raises(ValueError):
+        PerplexityWindowedDetector(window_size=0)
