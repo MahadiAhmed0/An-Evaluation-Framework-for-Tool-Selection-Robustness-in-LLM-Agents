@@ -1,4 +1,4 @@
-﻿"""LLM tool selector replicating the two-step selection prompt structure.
+"""LLM tool selector replicating the two-step selection prompt structure.
 
 This module reproduces the standard "present a ranked candidate list, then
 ask the model to pick one tool" pattern used by LLM agent frameworks, in
@@ -97,3 +97,95 @@ class Selector:
         """
         if self._llm_call is None:
             raise RuntimeError(
+                "Selector requires an llm_call function; pass one to the "
+                "constructor (e.g., Selector(llm_call=your_backend))."
+            )
+        if not candidates:
+            raise ValueError("candidates must not be empty")
+
+        prompt = self.build_prompt(query, candidates)
+        raw_output = self._llm_call(prompt)
+
+        if _looks_like_refusal(raw_output):
+            return SelectionResult(
+                selected_tool_name=None, raw_output=raw_output, status="refused"
+            )
+
+        parsed = _extract_json_object(raw_output)
+        if parsed is None:
+            return SelectionResult(
+                selected_tool_name=None, raw_output=raw_output, status="invalid_json"
+            )
+
+        name = parsed.get("select_tool")
+        if not isinstance(name, str) or not name.strip():
+            return SelectionResult(
+                selected_tool_name=None, raw_output=raw_output, status="invalid_json"
+            )
+
+        name = name.strip()
+        candidate_names = {doc.tool_name for doc in candidates}
+        if name not in candidate_names:
+            return SelectionResult(
+                selected_tool_name=None, raw_output=raw_output, status="unknown_tool"
+            )
+
+        return SelectionResult(
+            selected_tool_name=name, raw_output=raw_output, status="success"
+        )
+
+
+@dataclass(frozen=True)
+class SelectionResult:
+    """Outcome of a single tool-selection attempt.
+
+    Attributes:
+        selected_tool_name: Name of the chosen tool; set only on
+            ``status == "success"``.
+        raw_output: The model's response exactly as returned, preserved for
+            auditing and error analysis.
+        status: Classification of the attempt (see :meth:`Selector.select`).
+    """
+
+    selected_tool_name: Optional[str]
+    raw_output: str
+    status: SelectionStatus
+
+
+def _strip_code_fences(text: str) -> str:
+    """Remove surrounding markdown code fences from model output."""
+    stripped = text.strip()
+    fence = "```"
+    if stripped.startswith(fence):
+        newline = stripped.find("\n")
+        if newline != -1:
+            stripped = stripped[newline + 1 :]
+        if stripped.endswith(fence):
+            stripped = stripped[: -len(fence)]
+    return stripped.strip()
+
+
+def _extract_json_object(text: str) -> Optional[dict[str, Any]]:
+    """Extract the first JSON object embedded anywhere in ``text``.
+
+    Handles markdown code fences, prose before the object, and trailing text
+    after it. Returns ``None`` if no JSON object parses.
+    """
+    cleaned = _strip_code_fences(text)
+    decoder = json.JSONDecoder()
+    for idx, char in enumerate(cleaned):
+        if char != "{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(cleaned[idx:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def _looks_like_refusal(raw_output: str) -> bool:
+    """Detect common refusal phrasings in model output (case-insensitive)."""
+    lowered = raw_output.lower()
+    return any(pattern in lowered for pattern in _REFUSAL_PATTERNS)
