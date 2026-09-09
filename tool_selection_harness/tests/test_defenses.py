@@ -158,3 +158,70 @@ def test_known_answer_detector_fails_safe_on_backend_error() -> None:
 
     detector = KnownAnswerDetector(llm_call=broken)
     assert detector.score(ToolDocument("t", "d")) == 1.0
+
+
+# -- ThresholdClassifier ---------------------------------------------------------
+
+
+def test_fit_threshold_approximates_target_fpr() -> None:
+    rng = np.random.default_rng(0)
+    scores = rng.normal(size=10_000).tolist()
+    threshold = _threshold_for_fpr(scores, 0.10)
+    flagged = sum(1 for s in scores if s > threshold)
+    assert flagged / len(scores) == pytest.approx(0.10, abs=0.02)
+
+
+def test_fit_threshold_zero_fpr_flags_nothing() -> None:
+    threshold = _threshold_for_fpr([1.0, 2.0, 3.0], 0.0)
+    assert all(s <= threshold for s in [1.0, 2.0, 3.0])
+
+
+def test_fit_threshold_one_fpr_flags_everything() -> None:
+    threshold = _threshold_for_fpr([1.0, 2.0, 3.0], 1.0)
+    assert all(s > threshold for s in [1.0, 2.0, 3.0])
+
+
+def test_fit_threshold_rejects_empty_scores() -> None:
+    classifier = ThresholdClassifier()
+    with pytest.raises(ValueError):
+        classifier.fit_threshold([], 0.1)
+
+
+def test_fit_threshold_rejects_out_of_range_fpr() -> None:
+    classifier = ThresholdClassifier()
+    with pytest.raises(ValueError):
+        classifier.fit_threshold([1.0, 2.0], 1.5)
+
+
+def test_fit_threshold_sets_and_returns_threshold() -> None:
+    classifier = ThresholdClassifier()
+    threshold = classifier.fit_threshold([1.0, 2.0, 3.0], 0.0)
+    assert classifier.threshold == threshold
+
+
+def test_classify_without_detector_raises() -> None:
+    classifier = ThresholdClassifier()
+    classifier.fit_threshold([1.0, 2.0], 0.5)
+    with pytest.raises(RuntimeError):
+        classifier.classify(ToolDocument("t", "d"))
+
+
+def test_classify_before_fit_raises() -> None:
+    class FakeDetector:
+        def score(self, doc: ToolDocument) -> float:
+            return 1.0
+
+    classifier = ThresholdClassifier(detector=FakeDetector())
+    with pytest.raises(RuntimeError):
+        classifier.classify(ToolDocument("t", "d"))
+
+
+def test_classify_flags_scores_above_threshold() -> None:
+    class FakeDetector:
+        def score(self, doc: ToolDocument) -> float:
+            return {"low": 1.0, "high": 5.0}[doc.tool_name]
+
+    classifier = ThresholdClassifier(detector=FakeDetector())
+    classifier.fit_threshold([1.0, 1.0, 2.0], 0.5)
+    assert classifier.classify(ToolDocument("low", "d")) is False
+    assert classifier.classify(ToolDocument("high", "d")) is True
