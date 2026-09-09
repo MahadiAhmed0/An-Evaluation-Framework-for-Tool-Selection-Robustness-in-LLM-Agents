@@ -75,3 +75,35 @@ def stub_transformers(monkeypatch):
     )
     monkeypatch.setitem(__import__("sys").modules, "transformers", fake)
     return fake
+
+
+# -- Detector protocol ---------------------------------------------------------
+
+
+def test_detector_protocol_accepts_score_implementations() -> None:
+    class ConstantDetector:
+        def score(self, doc: ToolDocument) -> float:
+            return 0.5
+
+    detector: Detector = ConstantDetector()
+    assert detector.score(ToolDocument("t", "d")) == 0.5
+
+
+# -- PerplexityDetector ---------------------------------------------------------
+
+
+def test_perplexity_detector_scores_mean_nll(stub_transformers) -> None:
+    detector = PerplexityDetector()
+    doc = ToolDocument("tool", "ab cd")  # per-token NLLs [2.0] -> mean 2.0
+    assert detector.score(doc) == pytest.approx(2.0)
+
+
+def test_perplexity_detector_uses_description_not_name(stub_transformers) -> None:
+    detector = PerplexityDetector()
+    doc = ToolDocument("tool", "xyz abc")  # NLLs [3.0] -> mean 3.0
+    assert detector.score(doc) == pytest.approx(3.0)
+
+
+def test_perplexity_detector_single_token_is_zero(stub_transformers) -> None:
+    detector = PerplexityDetector()
+    assert detector.score(ToolDocument("tool", "xyz")) == 0.0
