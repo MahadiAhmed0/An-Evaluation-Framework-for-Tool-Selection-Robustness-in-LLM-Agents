@@ -150,3 +150,11 @@ def test_known_answer_detector_accepts_secret_response() -> None:
 def test_known_answer_detector_flags_broken_response() -> None:
     detector = KnownAnswerDetector(llm_call=lambda prompt: "Some other output")
     assert detector.score(ToolDocument("t", "d")) == 1.0
+
+
+def test_known_answer_detector_fails_safe_on_backend_error() -> None:
+    def broken(prompt: str) -> str:
+        raise RuntimeError("api down")
+
+    detector = KnownAnswerDetector(llm_call=broken)
+    assert detector.score(ToolDocument("t", "d")) == 1.0
