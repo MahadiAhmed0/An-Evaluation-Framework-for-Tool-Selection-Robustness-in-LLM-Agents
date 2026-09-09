@@ -1,4 +1,4 @@
-﻿"""Standard tool-selection evaluation metrics.
+"""Standard tool-selection evaluation metrics.
 
 Implements the scalar metrics commonly reported in tool-selection
 benchmarks (cf. MetaTool/ToolBench): selection accuracy, top-k hit rate,
@@ -73,3 +73,73 @@ def hit_rate_at_k(results: List[EvalRecord]) -> float:
     Computed over all records (baseline and test-document passes alike),
     since displacement of the expected tool from the top-k set is itself a
     quantity of interest. Returns 0.0 for an empty result list.
+    """
+    if not results:
+        return 0.0
+    hits = sum(
+        1
+        for r in results
+        if any(doc.tool_name == r.expected_tool for doc in r.retrieved_docs)
+    )
+    return hits / len(results)
+
+
+def target_selection_rate(results: List[EvalRecord]) -> float:
+    """Fraction of test-document records where the test document was selected.
+
+    Generic measure of how often a researcher-introduced test document ends
+    up being the chosen tool. Denominator is records with a test document
+    present; returns 0.0 when there are none.
+    """
+    injected = [r for r in results if not _is_baseline(r)]
+    if not injected:
+        return 0.0
+    selected = sum(
+        1
+        for r in injected
+        if r.selection_result.status == "success"
+        and r.selection_result.selected_tool_name == r.test_document.tool_name
+    )
+    return selected / len(injected)
+
+
+def target_retrieval_rate(results: List[EvalRecord]) -> float:
+    """Fraction of test-document records where the test document was retrieved.
+
+    A record counts as a hit when the exact test document (name and
+    description) appears in the retrieved top-k set. Denominator is records
+    with a test document present; returns 0.0 when there are none.
+    """
+    injected = [r for r in results if not _is_baseline(r)]
+    if not injected:
+        return 0.0
+    retrieved = sum(
+        1
+        for r in injected
+        if any(doc == r.test_document for doc in r.retrieved_docs)
+    )
+    return retrieved / len(injected)
+
+
+def status_breakdown(results: List[EvalRecord]) -> Dict[str, int]:
+    """Count selector outcomes per status across all records.
+
+    Returns a dict with every known :class:`SelectionResult` status as a
+    key (missing statuses count 0), so the breakdown is stable for
+    serialization and table rendering.
+    """
+    counts: Dict[str, int] = {"success": 0, "invalid_json": 0, "unknown_tool": 0, "refused": 0}
+    for record in results:
+        status = record.selection_result.status
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def compute_all(results: List[EvalRecord]) -> Dict[str, float]:
+    """Compute all scalar metrics for ``results`` in one call."""
+    return {
+        "accuracy": accuracy(results),
+        "hit_rate_at_k": hit_rate_at_k(results),
+        "target_selection_rate": target_selection_rate(results),
+        "target_retrieval_rate": target_retrieval_rate(results),
+    }
