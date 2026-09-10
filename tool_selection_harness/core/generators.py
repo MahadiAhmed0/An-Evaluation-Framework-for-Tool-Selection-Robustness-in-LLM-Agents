@@ -1,4 +1,4 @@
-﻿"""Synthetic data generation utilities for the tool-selection harness.
+"""Synthetic data generation utilities for the tool-selection harness.
 
 The generators in this module use an LLM backend (injected via ``llm_call``)
 to produce realistic evaluation material: diverse user queries for a target
@@ -85,3 +85,85 @@ def generate_tool_documents(
         llm_call: Pluggable LLM backend taking a prompt and returning raw
             text containing a JSON list of tool documents.
 
+    Returns:
+        Up to ``num`` validated :class:`ToolDocument` objects.
+
+    Raises:
+        ValueError: If ``num`` is not positive, no documents parse, or a
+            returned entry is missing/invalid fields.
+    """
+    if num <= 0:
+        raise ValueError(f"num must be positive, got {num}")
+    if not context_queries:
+        raise ValueError("context_queries must not be empty")
+
+    query_lines = "\n".join(f"- {q}" for q in context_queries)
+    prompt = TOOL_DOCS_PROMPT_TEMPLATE.format(num=num, queries=query_lines)
+    raw_output = llm_call(prompt)
+
+    items = _extract_json_list(raw_output)
+    if items is None:
+        raise ValueError(
+            f"Could not parse a JSON list of tool documents from LLM "
+            f"output: {raw_output!r}"
+        )
+
+    documents: List[ToolDocument] = []
+    for item in items[:num]:
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"Each tool document must be a JSON object, got "
+                f"{type(item).__name__}: {item!r}"
+            )
+        try:
+            documents.append(
+                ToolDocument(
+                    tool_name=str(item["tool_name"]),
+                    tool_description=str(item["tool_description"]),
+                )
+            )
+        except KeyError as exc:
+            raise ValueError(
+                f"Tool document missing required key {exc.args[0]!r}: {item!r}"
+            ) from exc
+    if not documents:
+        raise ValueError("No valid tool documents were returned by the LLM")
+    return documents
+
+
+def _parse_string_list(raw_output: str) -> List[str]:
+    """Parse a list of strings from LLM output, tolerantly.
+
+    Tries, in order: a JSON list of strings, a fenced JSON list, then a
+    line-based fallback that strips numbering/bullets and quotes.
+    """
+    cleaned = _strip_code_fences(raw_output)
+    as_list = _extract_json_list(cleaned)
+    if as_list is not None and all(isinstance(item, str) for item in as_list):
+        return [item.strip() for item in as_list if item.strip()]
+
+    queries: List[str] = []
+    for line in cleaned.splitlines():
+        line = line.strip().lstrip("-*•").strip()
+        line = line.lstrip("0123456789").lstrip(".)").strip()
+        if line.startswith('"') and line.endswith('"') and len(line) >= 2:
+            line = line[1:-1].strip()
+        if line:
+            queries.append(line)
+    return queries
+
+
+def _extract_json_list(text: str) -> List[Any] | None:
+    """Extract the first JSON list embedded anywhere in ``text``."""
+    cleaned = _strip_code_fences(text)
+    decoder = json.JSONDecoder()
+    for idx, char in enumerate(cleaned):
+        if char != "[":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(cleaned[idx:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, list):
+            return obj
+    return None
