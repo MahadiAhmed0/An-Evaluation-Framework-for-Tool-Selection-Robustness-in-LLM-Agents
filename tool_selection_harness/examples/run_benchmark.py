@@ -1,4 +1,4 @@
-﻿"""End-to-end example: benchmark tool-selection robustness and detection.
+"""End-to-end example: benchmark tool-selection robustness and detection.
 
 Pipeline:
   1. Load a synthetic tool library (data/sample_tools.json).
@@ -171,3 +171,164 @@ def make_api_llm_call() -> Optional[Callable[[str], str]]:
         client = Anthropic()
 
         def call_anthropic(prompt: str) -> str:
+            message = client.messages.create(
+                model="claude-3-5-haiku-latest",
+                max_tokens=1024,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return "".join(block.text for block in message.content)
+
+        return call_anthropic
+
+    return None
+
+
+def make_greedy_selector_llm() -> Callable[[str], str]:
+    """Offline fallback: pick the first tool listed in the rendered prompt.
+
+    Returns valid JSON the real Selector parsing path will consume.
+    """
+
+    def greedy(prompt: str) -> str:
+        match = re.search(r"tool_name:\s*([^,]+),", prompt)
+        if match is None:
+            return "I'm sorry, but I cannot assist with that request."
+        return json.dumps({"select_tool": match.group(1).strip()})
+
+    return greedy
+
+
+def run_detection(
+    library: ToolLibrary, variant: ToolDocument, target_fpr: float
+) -> Optional[dict]:
+    """Calibrate a PerplexityDetector on the library and score the variant.
+
+    Returns a small dict with threshold, FNR, FPR and the variant's flag
+    status, or None when the local LM cannot be loaded.
+    """
+    detector = PerplexityDetector()
+    try:
+        calibration_scores = [detector.score(doc) for doc in library.documents]
+    except (ImportError, OSError) as exc:
+        print(f"Detection skipped (unable to load local LM): {exc}")
+        return None
+
+    classifier = ThresholdClassifier(detector=detector)
+    threshold = classifier.fit_threshold(calibration_scores, target_fpr)
+
+    labels = [False] * len(library.documents) + [True]
+    predictions = [classifier.classify(doc) for doc in library.documents]
+    predictions.append(classifier.classify(variant))
+
+    return {
+        "threshold": threshold,
+        "variant_flagged": predictions[-1],
+        "false_positive_rate": false_positive_rate(labels, predictions),
+        "false_negative_rate": false_negative_rate(labels, predictions),
+    }
+
+
+def print_detection_table(result: dict, target_fpr: float) -> None:
+    rows = [
+        ("calibration_fpr_target", f"{target_fpr:.2f}"),
+        ("threshold", f"{result['threshold']:.4f}"),
+        ("false_positive_rate", f"{result['false_positive_rate']:.4f}"),
+        ("false_negative_rate", f"{result['false_negative_rate']:.4f}"),
+        ("variant_flagged", str(result["variant_flagged"])),
+    ]
+    width = max(len(label) for label, _ in rows)
+    print("Detection (PerplexityDetector, gpt2)")
+    print("=" * (width + 14))
+    print(f"{'Metric':<{width}}  Value")
+    print(f"{'-' * width}  {'-' * 6}")
+    for label, value in rows:
+        print(f"{label:<{width}}  {value}")
+    print()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Benchmark tool-selection robustness and detection."
+    )
+    parser.add_argument(
+        "--task",
+        default="weather",
+        choices=sorted(TASK_CANONICAL_TOOL),
+        help="Target task for the evaluation queries.",
+    )
+    parser.add_argument("--k", type=int, default=3, help="Top-k retrieval width.")
+    parser.add_argument(
+        "--num-queries", type=int, default=10, help="Number of evaluation queries."
+    )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Avoid model downloads: char n-gram embeddings, skip gpt2 detection.",
+    )
+    args = parser.parse_args()
+
+    library = ToolLibrary.load_json(SAMPLE_TOOLS)
+    expected_tool = TASK_CANONICAL_TOOL[args.task]
+    variant = VARIANT_DOCS[args.task]
+
+    llm_call = None if args.offline else make_api_llm_call()
+    if llm_call is not None:
+        print(f"Generating {args.num_queries} queries for task "
+              f"{args.task!r} via LLM...")
+        queries = generate_task_descriptions(args.task, args.num_queries, llm_call)
+    else:
+        queries = FALLBACK_QUERIES[args.task][: args.num_queries]
+        print(f"Using {len(queries)} canned queries for task {args.task!r} "
+              "(no API key configured).")
+
+    pairs: List[Tuple[str, str]] = [(q, expected_tool) for q in queries]
+    retriever = (
+        Retriever(embed_fn=hashing_embedder())
+        if args.offline
+        else Retriever()
+    )
+    selector = Selector(llm_call=llm_call if llm_call is not None else make_greedy_selector_llm())
+
+    print(f"\nLibrary: {len(library)} tools from {SAMPLE_TOOLS.name}")
+    print(f"Config: task={args.task}, k={args.k}, queries={len(pairs)}")
+
+    print("\n--- Baseline pass (no test document) ---")
+    baseline_runner = BenchmarkRunner(
+        library=library,
+        retriever=retriever,
+        selector=selector,
+        queries=pairs,
+        k=args.k,
+    )
+    baseline_results = baseline_runner.run()
+    baseline_runner.print_summary()
+
+    print(f"\n--- Variant pass (test document: {variant.tool_name}) ---")
+    variant_runner = BenchmarkRunner(
+        library=library,
+        retriever=retriever,
+        selector=selector,
+        queries=pairs,
+        k=args.k,
+        test_document=variant,
+    )
+    variant_results = variant_runner.run()
+    variant_runner.print_summary()
+
+    if not args.offline:
+        print("\n--- Detection pass ---")
+        detection = run_detection(library, variant, target_fpr=0.10)
+        if detection is not None:
+            print_detection_table(detection, target_fpr=0.10)
+
+    out_path = ROOT / "example_results.json"
+    combined = {"baseline": baseline_results, "variant": variant_results}
+    out_path.write_text(
+        json.dumps(combined, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    print(f"Full results written to {out_path}")
+
+
+if __name__ == "__main__":
+    main()
