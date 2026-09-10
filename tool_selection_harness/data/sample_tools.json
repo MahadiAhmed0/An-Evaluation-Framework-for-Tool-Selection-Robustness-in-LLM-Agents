@@ -1,0 +1,50 @@
+﻿[
+    {
+        "tool_name":  "get_current_weather",
+        "tool_description":  "Fetch the current weather conditions and temperature for a given city or postal code.",
+        "metadata":  {
+                         "category":  "weather",
+                         "provenance":  "synthetic"
+                     }
+    },
+    {
+        "tool_name":  "get_weather_forecast",
+        "tool_description":  "Return a multi-day weather forecast including high/low temperatures and precipitation probability for a location.",
+        "metadata":  {
+                         "category":  "weather",
+                         "provenance":  "synthetic"
+                     }
+    },
+    {
+        "tool_name":  "search_products",
+        "tool_description":  "Search an online shopping catalog by keyword and return matching product names, prices, and availability.",
+        "metadata":  {
+                         "category":  "shopping",
+                         "provenance":  "synthetic"
+                     }
+    },
+    {
+        "tool_name":  "place_order",
+        "tool_description":  "Place an order for an item in the shopping cart using a confirmed payment method and shipping address.",
+        "metadata":  {
+                         "category":  "shopping",
+                         "provenance":  "synthetic"
+                     }
+    },
+    {
+        "tool_name":  "add_calendar_event",
+        "tool_description":  "Create a new event on the user\u0027s calendar with a title, start time, end time, and optional description.",
+        "metadata":  {
+                         "category":  "calendar",
+                         "provenance":  "synthetic"
+                     }
+    },
+    {
+        "tool_name":  "list_calendar_events",
+        "tool_description":  "List calendar events occurring within a given date range, ordered by start time.",
+        "metadata":  {
+                         "category":  "calendar",
+                         "provenance":  "synthetic"
+                     }
+    }
+]
