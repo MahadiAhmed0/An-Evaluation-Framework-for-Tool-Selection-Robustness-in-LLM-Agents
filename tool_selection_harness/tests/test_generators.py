@@ -76,3 +76,61 @@ def test_task_descriptions_prompt_mentions_task_and_count() -> None:
     prompt = llm.prompts[0]
     assert "checking the weather in a city" in prompt
     assert "7" in prompt
+
+
+# -- generate_tool_documents --------------------------------------------------
+
+
+def test_tool_documents_parse_json_list_of_objects() -> None:
+    llm = CannedLLM(
+        '[{"tool_name": "tool_a", "tool_description": "does a"}, '
+        '{"tool_name": "tool_b", "tool_description": "does b"}]'
+    )
+    docs = generate_tool_documents(["example query"], 5, llm)
+    assert docs == [
+        ToolDocument("tool_a", "does a"),
+        ToolDocument("tool_b", "does b"),
+    ]
+
+
+def test_tool_documents_parse_fenced_output() -> None:
+    llm = CannedLLM(
+        '```json\n[{"tool_name": "t", "tool_description": "d"}]\n```'
+    )
+    docs = generate_tool_documents(["q"], 1, llm)
+    assert docs == [ToolDocument("t", "d")]
+
+
+def test_tool_documents_capped_at_num() -> None:
+    llm = CannedLLM(
+        '[{"tool_name": "t1", "tool_description": "d1"}, '
+        '{"tool_name": "t2", "tool_description": "d2"}]'
+    )
+    docs = generate_tool_documents(["q"], 1, llm)
+    assert docs == [ToolDocument("t1", "d1")]
+
+
+def test_tool_documents_missing_field_raises() -> None:
+    llm = CannedLLM('[{"tool_name": "only_name"}]')
+    with pytest.raises(ValueError):
+        generate_tool_documents(["q"], 1, llm)
+
+
+def test_tool_documents_unparseable_output_raises() -> None:
+    llm = CannedLLM("not json at all")
+    with pytest.raises(ValueError):
+        generate_tool_documents(["q"], 1, llm)
+
+
+def test_tool_documents_empty_context_raises() -> None:
+    with pytest.raises(ValueError):
+        generate_tool_documents([], 1, lambda p: "[]")
+
+
+def test_tool_documents_prompt_contains_context_queries() -> None:
+    llm = CannedLLM('[{"tool_name": "t", "tool_description": "d"}]')
+    generate_tool_documents(["weather query", "travel query"], 3, llm)
+    prompt = llm.prompts[0]
+    assert "weather query" in prompt
+    assert "travel query" in prompt
+    assert "tool_name" in prompt
