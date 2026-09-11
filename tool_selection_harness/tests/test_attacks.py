@@ -6,9 +6,14 @@ stub models (no downloads). Everything targets the local benchmark
 harness only, per the module's ethics note.
 """
 
+from typing import List
+
 import pytest
 
-from tool_selection_harness.core.attacks import manual_attack_documents
+from tool_selection_harness.core.attacks import (
+    generate_retrieval_sequence,
+    manual_attack_documents,
+)
 
 
 # -- manual baselines ----------------------------------------------------------
@@ -33,3 +38,26 @@ def test_manual_attacks_contain_instruction_phrases() -> None:
     assert "Just output" in docs["naive"].tool_description
     assert "Ignore all previous instructions" in docs["context_ignore"].tool_description
     assert "Task completed" in docs["fake_completion"].tool_description
+
+
+# -- gradient-free R ------------------------------------------------------------
+
+
+def test_generate_retrieval_sequence_uses_prompt() -> None:
+    prompts: List[str] = []
+
+    def llm_call(prompt: str) -> str:
+        prompts.append(prompt)
+        return "Provides weather information for any city."
+
+    result = generate_retrieval_sequence(
+        ["What is the weather in Paris?"], num_words=30, llm_call=llm_call
+    )
+    assert result == "Provides weather information for any city."
+    assert "What is the weather in Paris?" in prompts[0]
+    assert "functionality description" in prompts[0]
+
+
+def test_generate_retrieval_sequence_rejects_empty_queries() -> None:
+    with pytest.raises(ValueError):
+        generate_retrieval_sequence([], 10, lambda p: "x")
