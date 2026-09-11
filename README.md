@@ -1,10 +1,10 @@
-﻿# Tool-Selection Robustness Evaluation Harness
+# Tool-Selection Robustness Evaluation Harness
 
 A Python research harness for **benchmarking tool-selection robustness in LLM
 agents** and for **evaluating detection methods**. It models the standard
 "retrieve -> select" pipeline used by LLM agent frameworks (tool documents, an
 embedding retriever, a two-step selection prompt) and measures how reliably an
-agent selects the intended tool â€” including under modified tool registries.
+agent selects the intended tool — including under modified tool registries.
 
 > **Scope note:** this project is defensive research tooling. It exists to
 > *measure* selection/retrieval behavior and detection quality. It does not
@@ -60,21 +60,21 @@ streamlit run app.py
 
 Four tabs:
 
-- **Tool Library** â€” load `data/sample_tools.json` or upload a custom JSON,
+- **Tool Library** — load `data/sample_tools.json` or upload a custom JSON,
   edit documents in an editable table, add/remove tools via a form, and
   generate synthetic tools through `core/generators.py` using the selected
   LLM backend.
-- **Run Benchmark** â€” pick the embedding backend (MiniLM or offline
+- **Run Benchmark** — pick the embedding backend (MiniLM or offline
   hashing), similarity metric, and top-k; paste or auto-generate queries;
   optionally inject one hand-written *benign comparison variant* document
   (clearly labeled as metric-testing material, not an attack payload). Runs
   `core/runner.py`'s `BenchmarkRunner` with a progress bar and shows metric
   cards, a baseline-vs-injected bar chart, and raw per-query records.
-- **Detection** â€” calibrates `PerplexityDetector` (gpt2, one-time download)
+- **Detection** — calibrates `PerplexityDetector` (gpt2, one-time download)
   on the current library, plots the benign score histogram with the variant
   marked, lets you sweep the FPR target (live FNR/FPR and flagged-document
   table), and draws the FNR-vs-FPR tradeoff line.
-- **History** â€” saved runs (`benchmark_history/`) can be reloaded and
+- **History** — saved runs (`benchmark_history/`) can be reloaded and
   compared side by side.
 
 The LLM provider is chosen in the sidebar (Anthropic / OpenAI / mock); all
@@ -84,7 +84,7 @@ interfaces, so the UI never hardcodes a provider.
 ## Alignment with the research paper
 
 This project reproduces the framework of *Prompt Injection Attack to Tool
-Selection in LLM Agents* (Shi et al., NDSS 2026 â€” `Related Papers/`) inside
+Selection in LLM Agents* (Shi et al., NDSS 2026 — `Related Papers/`) inside
 a controlled, defensive evaluation environment:
 
 | Paper element | Module |
@@ -100,3 +100,99 @@ a controlled, defensive evaluation environment:
 | Query / tool-document generation prompts (Fig. 10/11) | `core/generators.py` |
 
 End-to-end reproduction script:
+
+```
+python examples/run_toolhijacker.py --offline            # mocks, no downloads
+python examples/run_toolhijacker.py --gradient-based     # + gpt2/MiniLM optimization
+```
+
+The gradient-based components are verified with unit-test stubs; real runs
+download local models. **Ethics note:** attack-side code targets the
+synthetic benchmark library only, mirroring the paper's ethics section —
+do not point it at real agents or production tool registries.
+
+## Quick start
+
+```
+python examples/run_benchmark.py --task weather --num-queries 10 --k 3
+```
+
+The example loads `data/sample_tools.json`, generates (or reuses) user queries
+for one task, then runs:
+
+1. **Baseline pass** — no modifications; reports accuracy and hit rate.
+2. **Variant pass** — inserts one hand-written, benign-looking alternative
+   tool document (not an optimized adversarial one) and reports
+   `target_selection_rate` / `target_retrieval_rate`.
+3. **Detection pass** — calibrates a `PerplexityDetector` (gpt2) threshold at a
+   target FPR on the benign library and reports FNR/FPR for the variant
+   document. Skipped gracefully when the model cannot be downloaded.
+
+Use `--offline` to avoid all model downloads (deterministic character/word
+n-gram embeddings, no detection pass). Full JSON results are written to
+`example_results.json`.
+
+## Plugging in real backends
+
+The harness is deliberately backend-agnostic; every external component is an
+injectable callback.
+
+**Embeddings** — `Retriever(embed_fn=...)` accepts any `text -> vector`
+callable; the default is sentence-transformers `all-MiniLM-L6-v2` (lazy
+loaded):
+
+```python
+from tool_selection_harness.core import Retriever
+
+retriever = Retriever()  # MiniLM backend, downloads on first use
+# or:
+retriever = Retriever(embed_fn=my_custom_embedding_fn)
+```
+
+**LLM selection** — `Selector(llm_call=...)` accepts any `prompt -> str`
+function:
+
+```python
+from openai import OpenAI
+from tool_selection_harness.core import Selector
+
+client = OpenAI()
+
+def call_openai(prompt: str) -> str:
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.choices[0].message.content
+
+selector = Selector(llm_call=call_openai)
+```
+
+The example script wires these automatically when `OPENAI_API_KEY` or
+`ANTHROPIC_API_KEY` is set (used for both query generation via
+`core/generators.py` and selection); otherwise it falls back to canned
+queries and a greedy prompt-parsing selector so the pipeline stays runnable
+offline.
+
+**Detection** — implement the `Detector` protocol to plug in your own scoring
+rule:
+
+```python
+from tool_selection_harness.core import Detector, ThresholdClassifier
+
+class MyDetector(Detector):
+    def score(self, doc: ToolDocument) -> float:
+        return suspiciousness_of(doc)  # higher = more suspicious
+
+classifier = ThresholdClassifier(detector=MyDetector())
+threshold = classifier.fit_threshold(benign_scores, target_fpr=0.10)
+flagged = classifier.classify(candidate_doc)
+```
+
+## Tests
+
+```
+python -m pytest tool_selection_harness/tests -q
+```
+
+All tests use deterministic mock backends (no network, no model downloads).
