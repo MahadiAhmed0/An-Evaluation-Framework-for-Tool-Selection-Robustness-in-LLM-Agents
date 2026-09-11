@@ -176,3 +176,36 @@ def optimize_selection_sequence(
                 break
 
     return current
+
+
+def toolhijacker_gradient_free(
+    target_task: str,
+    shadow_queries: List[str],
+    shadow_docs: List[ToolDocument],
+    attacker_llm: Callable[[str], str],
+    shadow_llm: Callable[[str], str],
+    tool_name: str,
+    num_words: int = 30,
+    **selection_kwargs,
+) -> ToolDocument:
+    """Craft a malicious tool document via ToolHijacker's gradient-free path.
+
+    The description is the concatenation R + S: R is an LLM-synthesized
+    functionality description (retrieval objective), S is the tree-search
+    optimized selection sequence.
+    """
+    retrieval = generate_retrieval_sequence(
+        shadow_queries, num_words=num_words, llm_call=attacker_llm
+    )
+    selection = optimize_selection_sequence(
+        tool_name,
+        shadow_queries,
+        shadow_docs,
+        attacker_llm=attacker_llm,
+        shadow_llm=shadow_llm,
+        **selection_kwargs,
+    )
+    return ToolDocument(
+        tool_name=tool_name.strip(),
+        tool_description=f"{retrieval} {selection}",
+    )
