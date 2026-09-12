@@ -209,3 +209,64 @@ def toolhijacker_gradient_free(
         tool_name=tool_name.strip(),
         tool_description=f"{retrieval} {selection}",
     )
+
+
+# ---------------------------------------------------------------------------
+# ToolHijacker: gradient-based optimization (Eqs. 6-14)
+# ---------------------------------------------------------------------------
+
+
+def _torch():
+    import torch
+
+    return torch
+
+
+def selection_total_loss(
+    model,
+    tokenizer,
+    input_ids: List[int],
+    suffix_start: int,
+    target_ids: List[int],
+    name_ids: List[int],
+    alpha: float,
+    beta: float,
+    device: str = "cpu",
+):
+    """Compute L = L1 + alpha*L2 + beta*L3 (paper Eq. 13) for one input.
+
+    Uses input embeddings so gradients flow back to the suffix tokens.
+    Returns ``(loss, embeddings)`` where ``loss`` is a scalar tensor
+    and ``embeddings`` is the differentiable input-embedding tensor.
+    """
+    torch = _torch()
+    ids_t = torch.tensor([input_ids + target_ids + name_ids], device=device)
+    embeddings = model.get_input_embeddings()(ids_t)
+    embeddings = embeddings.detach().requires_grad_(True)
+    logits = model(inputs_embeds=embeddings).logits
+    log_probs = logits.log_softmax(-1)[0]
+    input_len = len(input_ids)
+
+    def nll(positions, labels):
+        total = torch.zeros((), device=device)
+        for position, label in zip(positions, labels):
+            if position < 1:
+                continue
+            total = total - log_probs[position - 1, label]
+        return total
+
+    l1 = nll(range(input_len, input_len + len(target_ids)), target_ids)
+    name_start = input_len + len(target_ids)
+    l2 = nll(
+        range(name_start, name_start + len(name_ids)),
+        name_ids,
+    )
+    suffix_count = input_len - suffix_start
+    l3 = torch.zeros((), device=device)
+    for position in range(suffix_start, input_len):
+        if position < 1:
+            continue
+        l3 = l3 - log_probs[position - 1, ids_t[0, position]]
+    if suffix_count > 0:
+        l3 = l3 / suffix_count
+    return l1 + alpha * l2 + beta * l3, embeddings
