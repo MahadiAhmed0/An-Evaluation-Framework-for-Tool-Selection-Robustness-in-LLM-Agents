@@ -438,3 +438,108 @@ class GradientSelectionOptimizer:
         return tokenizer.decode(
             current[suffix_start:suffix_end], skip_special_tokens=True
         )
+
+class GradientRetrievalOptimizer:
+    """HotFlip-style token optimization of R (paper Eq. 6).
+
+    Maximizes the mean cosine similarity between the embedded candidate
+    text and embedded shadow queries via token-level flips, using the
+    gradient of a differentiable embedder. The embedder is injected as
+    ``embed_ids``: a callable mapping token-id lists (or tensors) to a
+    ``(pooled_vector, input_embeddings)`` pair, where ``input_embeddings``
+    is the per-token embedding tensor that carries the gradient used for
+    HotFlip candidate scoring. This keeps the optimizer backend-agnostic
+    and unit-testable.
+    """
+
+    def __init__(
+        self,
+        embed_ids: Callable[[List[int]], object],
+        vocab_size: int,
+        token_embeddings,
+        tokenize: Callable[[str], List[int]],
+        decode: Callable[[List[int]], str],
+    ) -> None:
+        self.embed_ids = embed_ids
+        self.vocab_size = vocab_size
+        self.token_embeddings = token_embeddings
+        self.tokenize = tokenize
+        self.decode = decode
+
+    def optimize(
+        self,
+        queries: List[str],
+        initial_text: str,
+        iterations: int = 3,
+        flip_candidates: int = 10,
+    ) -> str:
+        """Return a token-flipped version of ``initial_text`` (Eq. 6)."""
+        torch = _torch()
+        F = torch.nn.functional
+
+        query_ids = [
+            torch.tensor([self.tokenize(q)], dtype=torch.long)
+            for q in queries
+            if q.strip()
+        ]
+        if not query_ids:
+            raise ValueError("queries must not be empty")
+
+        def pooled_of(ids_tensor):
+            pooled, _ = self.embed_ids(ids_tensor)
+            return pooled
+
+        query_vecs = [
+            F.normalize(pooled_of(ids).detach(), dim=-1)
+            for ids in query_ids
+        ]
+
+        def loss_from_pooled(pooled_tensor):
+            normalized = F.normalize(pooled_tensor, dim=-1)
+            sims = torch.stack(
+                [
+                    F.cosine_similarity(normalized, qv, dim=-1)
+                    for qv in query_vecs
+                ]
+            )
+            return -sims.mean()
+
+        def loss_of(seq_ids):
+            pooled, _ = self.embed_ids(seq_ids)
+            return float(loss_from_pooled(pooled).detach().item())
+
+        current = self.tokenize(initial_text)
+        current_loss = loss_of(torch.tensor([current], dtype=torch.long))
+
+        for _ in range(iterations):
+            ids_t = torch.tensor([current], dtype=torch.long)
+            pooled, input_embeds = self.embed_ids(ids_t)
+            input_embeds.retain_grad()
+            loss = loss_from_pooled(pooled)
+            loss.backward()
+            grads = input_embeds.grad
+            if grads is None:  # pragma: no cover - defensive
+                break
+
+            improved = False
+            for position in range(len(current)):
+                grad = grads[0, position]
+                scores = grad @ self.token_embeddings.T
+                _, top_tokens = scores.topk(
+                    min(flip_candidates, scores.numel())
+                )
+                for token in top_tokens.tolist():
+                    if token == current[position]:
+                        continue
+                    trial = list(current)
+                    trial[position] = token
+                    trial_loss = loss_of(torch.tensor([trial], dtype=torch.long))
+                    if trial_loss < current_loss:
+                        current = trial
+                        current_loss = trial_loss
+                        improved = True
+                        break
+            if not improved:
+                break
+
+        return self.decode(current)
