@@ -270,3 +270,62 @@ def selection_total_loss(
     if suffix_count > 0:
         l3 = l3 / suffix_count
     return l1 + alpha * l2 + beta * l3, embeddings
+
+
+def _find_sublist(haystack: List[int], needle: List[int]) -> int:
+    """First index of ``needle`` as a contiguous subsequence, else -1.
+
+    Tolerates a trailing-token mismatch (punctuation can be merged or split
+    differently by the tokenizer).
+    """
+    for target in (needle, needle[:-1]):
+        if not target:
+            continue
+        for start in range(len(haystack) - len(target) + 1):
+            if haystack[start : start + len(target)] == target:
+                return start
+    return -1
+
+
+class GradientSelectionOptimizer:
+    """Gradient-based optimization of S (paper Eqs. 8-14).
+
+    GCG-style token coordinate ascent against a local causal LM: each
+    iteration computes the gradient of L = L1 + alpha*L2 + beta*L3 with
+    respect to the suffix token embeddings, proposes candidate token swaps
+    (top-k by gradient similarity), and accepts the swap that most reduces
+    the loss. The model is lazy-loaded (default: gpt2).
+    """
+
+    def __init__(
+        self,
+        model_name: str = "gpt2",
+        alpha: float = 2.0,
+        beta: float = 0.1,
+        device: str = "cpu",
+    ) -> None:
+        self.model_name = model_name
+        self.alpha = alpha
+        self.beta = beta
+        self.device = device
+        self._tokenizer = None
+        self._model = None
+
+    def _load(self):
+        if self._model is None:
+            try:
+                from transformers import AutoModelForCausalLM, AutoTokenizer
+            except ImportError as exc:  # pragma: no cover - depends on env
+                raise ImportError(
+                    "GradientSelectionOptimizer requires 'transformers' and "
+                    "'torch'. Install with `pip install transformers torch`."
+                ) from exc
+            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            self._model = AutoModelForCausalLM.from_pretrained(self.model_name)
+            self._model = self._model.to(self.device)
+            self._model.eval()
+        return self._tokenizer, self._model
+
+    def _ids(self, text: str) -> List[int]:
+        tokenizer, _ = self._load()
+        return tokenizer(text, add_special_tokens=False)["input_ids"]
