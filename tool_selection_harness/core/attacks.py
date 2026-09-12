@@ -14,6 +14,8 @@ registries, or live systems.
 
 from __future__ import annotations
 
+import json
+import random
 from typing import Callable, Dict, List, Optional
 
 from tool_selection_harness.core.generators import _parse_string_list
@@ -329,3 +331,100 @@ class GradientSelectionOptimizer:
     def _ids(self, text: str) -> List[int]:
         tokenizer, _ = self._load()
         return tokenizer(text, add_special_tokens=False)["input_ids"]
+
+    def optimize(
+        self,
+        prompt_text: str,
+        suffix: str,
+        tool_name: str,
+        iterations: int = 50,
+        top_k: int = 64,
+        batch_size: int = 128,
+        progress_cb: Optional[Callable[[int, int], None]] = None,
+    ) -> str:
+        """Optimize the trailing ``suffix`` of ``prompt_text``; returns it.
+
+        ``progress_cb``, if given, is invoked with ``(iteration,
+        total_iterations)`` for progress reporting.
+        """
+        torch = _torch()
+        _, model = self._load()
+        ids = self._ids(prompt_text)
+        suffix_ids = self._ids(" " + suffix)
+        suffix_start = _find_sublist(ids, suffix_ids)
+        if suffix_start < 0:
+            raise ValueError(
+                "suffix could not be located in prompt_text; make sure the "
+                "suffix text appears verbatim in the prompt"
+            )
+        target_ids = self._ids(json.dumps({"select_tool": tool_name}))
+        name_ids = self._ids(" " + tool_name)
+
+        def loss_of(seq):
+            loss, _ = selection_total_loss(
+                model,
+                None,
+                seq,
+                suffix_start,
+                target_ids,
+                name_ids,
+                self.alpha,
+                self.beta,
+                self.device,
+            )
+            return loss
+
+        current = list(ids)
+        current_loss = float(loss_of(current).detach().item())
+        embedding_weight = model.get_input_embeddings().weight.detach()
+
+        for iteration in range(iterations):
+            if progress_cb is not None:
+                progress_cb(iteration + 1, iterations)
+            loss, embeddings = selection_total_loss(
+                model,
+                None,
+                current,
+                suffix_start,
+                target_ids,
+                name_ids,
+                self.alpha,
+                self.beta,
+                self.device,
+            )
+            loss.backward()
+            grads = embeddings.grad
+            if grads is None:  # pragma: no cover - defensive
+                break
+            suffix_grads = grads[0, suffix_start:]
+
+            positions = list(range(suffix_start, len(current)))
+            candidates = []
+            for position in random.sample(
+                positions, min(batch_size, len(positions))
+            ):
+                grad = suffix_grads[position - suffix_start]
+                scores = grad @ embedding_weight.T
+                _, top_tokens = scores.topk(min(top_k, scores.numel()))
+                for token in top_tokens.tolist():
+                    if token != current[position]:
+                        candidates.append((position, token))
+            if not candidates:
+                break
+
+            improved = False
+            for position, token in candidates[:batch_size]:
+                trial = list(current)
+                trial[position] = token
+                trial_loss = float(loss_of(trial).detach().item())
+                if trial_loss < current_loss:
+                    current = trial
+                    current_loss = trial_loss
+                    improved = True
+            if not improved:
+                break
+
+        tokenizer, _ = self._load()
+        return tokenizer.decode(
+            current[suffix_start:], skip_special_tokens=True
+        )
