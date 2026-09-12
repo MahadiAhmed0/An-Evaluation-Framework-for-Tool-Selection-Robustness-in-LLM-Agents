@@ -234,12 +234,15 @@ def selection_total_loss(
     alpha: float,
     beta: float,
     device: str = "cpu",
+    suffix_end: Optional[int] = None,
 ):
     """Compute L = L1 + alpha*L2 + beta*L3 (paper Eq. 13) for one input.
 
     Uses input embeddings so gradients flow back to the suffix tokens.
-    Returns ``(loss, embeddings)`` where ``loss`` is a scalar tensor
-    and ``embeddings`` is the differentiable input-embedding tensor.
+    ``suffix_end`` marks the end of the suffix span (defaults to the end
+    of the input). Returns ``(loss, embeddings)`` where ``loss`` is a
+    scalar tensor and ``embeddings`` is the differentiable input-embedding
+    tensor.
     """
     torch = _torch()
     ids_t = torch.tensor([input_ids + target_ids + name_ids], device=device)
@@ -248,6 +251,8 @@ def selection_total_loss(
     logits = model(inputs_embeds=embeddings).logits
     log_probs = logits.log_softmax(-1)[0]
     input_len = len(input_ids)
+    if suffix_end is None:
+        suffix_end = input_len
 
     def nll(positions, labels):
         total = torch.zeros((), device=device)
@@ -263,9 +268,9 @@ def selection_total_loss(
         range(name_start, name_start + len(name_ids)),
         name_ids,
     )
-    suffix_count = input_len - suffix_start
+    suffix_count = suffix_end - suffix_start
     l3 = torch.zeros((), device=device)
-    for position in range(suffix_start, input_len):
+    for position in range(suffix_start, suffix_end):
         if position < 1:
             continue
         l3 = l3 - log_probs[position - 1, ids_t[0, position]]
@@ -342,10 +347,12 @@ class GradientSelectionOptimizer:
         batch_size: int = 128,
         progress_cb: Optional[Callable[[int, int], None]] = None,
     ) -> str:
-        """Optimize the trailing ``suffix`` of ``prompt_text``; returns it.
+        """Optimize the ``suffix`` within ``prompt_text``; returns it.
 
-        ``progress_cb``, if given, is invoked with ``(iteration,
-        total_iterations)`` for progress reporting.
+        The suffix span may appear anywhere in the prompt (e.g., inside a
+        tool document followed by trailer instructions); it is located by
+        token-span search. ``progress_cb``, if given, is invoked with
+        ``(iteration, total_iterations)`` for progress reporting.
         """
         torch = _torch()
         _, model = self._load()
@@ -357,6 +364,7 @@ class GradientSelectionOptimizer:
                 "suffix could not be located in prompt_text; make sure the "
                 "suffix text appears verbatim in the prompt"
             )
+        suffix_end = suffix_start + len(suffix_ids)
         target_ids = self._ids(json.dumps({"select_tool": tool_name}))
         name_ids = self._ids(" " + tool_name)
 
@@ -371,6 +379,7 @@ class GradientSelectionOptimizer:
                 self.alpha,
                 self.beta,
                 self.device,
+                suffix_end=suffix_end,
             )
             return loss
 
@@ -391,14 +400,15 @@ class GradientSelectionOptimizer:
                 self.alpha,
                 self.beta,
                 self.device,
+                suffix_end=suffix_end,
             )
             loss.backward()
             grads = embeddings.grad
             if grads is None:  # pragma: no cover - defensive
                 break
-            suffix_grads = grads[0, suffix_start:]
+            suffix_grads = grads[0, suffix_start:suffix_end]
 
-            positions = list(range(suffix_start, len(current)))
+            positions = list(range(suffix_start, suffix_end))
             candidates = []
             for position in random.sample(
                 positions, min(batch_size, len(positions))
@@ -426,5 +436,5 @@ class GradientSelectionOptimizer:
 
         tokenizer, _ = self._load()
         return tokenizer.decode(
-            current[suffix_start:], skip_special_tokens=True
+            current[suffix_start:suffix_end], skip_special_tokens=True
         )
