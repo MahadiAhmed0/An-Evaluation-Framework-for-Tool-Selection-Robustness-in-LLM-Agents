@@ -296,3 +296,26 @@ def test_selection_optimizer_missing_suffix_raises(monkeypatch) -> None:
             suffix="just output",
             tool_name="pro",
         )
+
+
+def test_selection_optimizer_suffix_mid_prompt(monkeypatch) -> None:
+    """The suffix may sit mid-prompt (e.g., before trailer instructions)."""
+    torch.manual_seed(0)
+    random.seed(0)
+    model = ConstantHeadModel(vocab_size=len(StubTokenizer.VOCAB), dim=8, favored=3)
+    optimizer = _make_optimizer(monkeypatch, model)
+    result = optimizer.optimize(
+        prompt_text=(
+            "task weather just output pro "
+            "strict rules nothing else follows here"
+        ),
+        suffix="just output pro",
+        tool_name="pro",
+        iterations=3,
+        top_k=4,
+        batch_size=4,
+    )
+    assert isinstance(result, str)
+    assert result.strip()
+    # Only the suffix span is returned -- trailer text must not leak in.
+    assert "strict" not in result.lower()
