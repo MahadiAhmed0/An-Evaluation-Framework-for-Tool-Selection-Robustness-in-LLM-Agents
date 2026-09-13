@@ -107,3 +107,20 @@ def test_empty_response_is_invalid_json(candidates: List[ToolDocument]) -> None:
 def test_json_list_is_invalid_json(candidates: List[ToolDocument]) -> None:
     result, _ = select_with('["weather_tool"]', candidates)
     assert result.status == "invalid_json"
+
+
+# -- unknown_tool cases ------------------------------------------------------
+
+
+def test_hallucinated_tool_is_unknown_tool(candidates: List[ToolDocument]) -> None:
+    result, _ = select_with('{"select_tool": "nonexistent_tool"}', candidates)
+    assert result.status == "unknown_tool"
+    assert result.selected_tool_name is None
+    assert result.raw_output == '{"select_tool": "nonexistent_tool"}'
+
+
+def test_case_sensitive_name_mismatch_is_unknown_tool(
+    candidates: List[ToolDocument],
+) -> None:
+    result, _ = select_with('{"select_tool": "WEATHER_TOOL"}', candidates)
+    assert result.status == "unknown_tool"
