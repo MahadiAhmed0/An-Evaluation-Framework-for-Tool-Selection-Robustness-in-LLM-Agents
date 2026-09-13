@@ -275,3 +275,70 @@ def test_save_json_before_run_raises(tmp_path: Path) -> None:
     )
     with pytest.raises(RuntimeError):
         runner.save_json(tmp_path / "never.json")
+
+# -- summary table ------------------------------------------------------------
+
+
+def test_print_summary_baseline(
+    library: ToolLibrary,
+    retriever: FakeRetriever,
+    selector: FakeSelector,
+    queries: List[Tuple[str, str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runner = BenchmarkRunner(
+        library=library, retriever=retriever, selector=selector, queries=queries, k=2
+    )
+    runner.run()
+    runner.print_summary()
+
+    out = capsys.readouterr().out
+    assert "Tool-Selection Benchmark Results" in out
+    assert "k=2  queries=3  test_document=-" in out
+    assert "accuracy" in out and "0.3333" in out
+    assert "hit_rate_at_k" in out and "1.0000" in out
+    assert "target_selection_rate" in out and "n/a" in out
+    assert "status_success" in out and "2" in out
+    assert "status_invalid_json" in out and "1" in out
+
+
+def test_print_summary_with_test_document(
+    library: ToolLibrary,
+    selector: FakeSelector,
+    queries: List[Tuple[str, str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    retriever = FakeRetriever(
+        {
+            "q1": ["tool_t", "tool_a"],
+            "q2": ["tool_b", "tool_c"],
+            "q3": ["tool_c", "tool_a"],
+        }
+    )
+    runner = BenchmarkRunner(
+        library=library,
+        retriever=retriever,
+        selector=selector,
+        queries=queries,
+        k=2,
+        test_document=DOC_T,
+    )
+    runner.run()
+    runner.print_summary()
+
+    out = capsys.readouterr().out
+    assert "test_document=tool_t" in out
+    assert "target_selection_rate" in out and "n/a" not in out
+    assert "target_retrieval_rate" in out and "0.3333" in out
+
+
+def test_print_summary_before_run_raises(capsys: pytest.CaptureFixture[str]) -> None:
+    runner = BenchmarkRunner(
+        library=ToolLibrary(documents=[DOC_A]),
+        retriever=FakeRetriever({}),
+        selector=FakeSelector({}),
+        queries=[],
+        k=2,
+    )
+    with pytest.raises(RuntimeError):
+        runner.print_summary()
