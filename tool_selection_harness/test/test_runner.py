@@ -80,3 +80,59 @@ def selector() -> FakeSelector:
             "q3": SelectionResult("tool_b", '{"select_tool": "tool_b"}', "success"),
         }
     )
+
+# -- run loop ----------------------------------------------------------------
+
+
+def test_run_collects_records_per_query(
+    library: ToolLibrary,
+    retriever: FakeRetriever,
+    selector: FakeSelector,
+    queries: List[Tuple[str, str]],
+) -> None:
+    runner = BenchmarkRunner(
+        library=library, retriever=retriever, selector=selector, queries=queries, k=2
+    )
+    results = runner.run()
+
+    assert retriever.top_k_calls == 3
+    assert selector.select_calls == 3
+    assert len(results["records"]) == 3
+
+    first = results["records"][0]
+    assert first["query"] == "q1"
+    assert first["expected_tool"] == "tool_a"
+    assert first["test_document"] is None
+    assert [doc["tool_name"] for doc in first["retrieved_docs"]] == [
+        "tool_a",
+        "tool_b",
+    ]
+    assert first["selection_result"] == {
+        "selected_tool_name": "tool_a",
+        "raw_output": '{"select_tool": "tool_a"}',
+        "status": "success",
+    }
+
+
+def test_run_computes_metrics(
+    library: ToolLibrary,
+    retriever: FakeRetriever,
+    selector: FakeSelector,
+    queries: List[Tuple[str, str]],
+) -> None:
+    runner = BenchmarkRunner(
+        library=library, retriever=retriever, selector=selector, queries=queries, k=2
+    )
+    metrics = runner.run()["metrics"]
+
+    # q1 correct; q2 invalid JSON; q3 selected tool_b instead of tool_c.
+    assert metrics["accuracy"] == pytest.approx(1 / 3)
+    assert metrics["hit_rate_at_k"] == pytest.approx(1.0)
+    assert metrics["target_selection_rate"] == 0.0
+    assert metrics["target_retrieval_rate"] == 0.0
+    assert metrics["selector_status_counts"] == {
+        "success": 2,
+        "invalid_json": 1,
+        "unknown_tool": 0,
+        "refused": 0,
+    }
