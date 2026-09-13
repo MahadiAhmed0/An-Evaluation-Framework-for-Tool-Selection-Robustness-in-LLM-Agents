@@ -130,3 +130,26 @@ def test_target_selection_rate_invalid_selection_not_counted() -> None:
 def test_target_selection_rate_no_test_documents_is_zero() -> None:
     records = [make_record([DOC_A], SUCCESS_A, "tool_a")]
     assert target_selection_rate(records) == 0.0
+
+# -- target_retrieval_rate -----------------------------------------------------
+
+
+def test_target_retrieval_rate_counts_exact_document_in_retrieved() -> None:
+    records = [
+        make_record([DOC_T, DOC_A], SUCCESS_A, "tool_a", test_doc=DOC_T),  # retrieved
+        make_record([DOC_A, DOC_B], SUCCESS_A, "tool_a", test_doc=DOC_T),  # not retrieved
+    ]
+    assert target_retrieval_rate(records) == pytest.approx(0.5)
+
+
+def test_target_retrieval_rate_requires_exact_match() -> None:
+    lookalike = ToolDocument("tool_t", "different description")
+    records = [
+        make_record([lookalike], SUCCESS_T, "tool_t", test_doc=DOC_T),
+    ]
+    assert target_retrieval_rate(records) == 0.0
+
+
+def test_target_retrieval_rate_no_test_documents_is_zero() -> None:
+    records = [make_record([DOC_A], SUCCESS_A, "tool_a")]
+    assert target_retrieval_rate(records) == 0.0
