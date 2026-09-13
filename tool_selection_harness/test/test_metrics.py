@@ -45,3 +45,23 @@ def make_record(
         expected_tool=expected,
         test_document=test_doc,
     )
+# -- accuracy ----------------------------------------------------------------
+
+
+def test_accuracy_fraction_of_correct_baseline_selections() -> None:
+    records = [
+        make_record([DOC_A], SUCCESS_A, "tool_a"),            # correct
+        make_record([DOC_B], SUCCESS_B, "tool_a"),            # wrong tool
+        make_record([DOC_A, DOC_B], SUCCESS_A, "tool_a"),     # correct
+    ]
+    assert accuracy(records) == pytest.approx(2 / 3)
+
+
+def test_accuracy_ignores_test_document_records() -> None:
+    records = [
+        make_record([DOC_A], SUCCESS_A, "tool_a"),                       # correct
+        make_record([DOC_T], SUCCESS_T, "tool_t", test_doc=DOC_T),       # ignored
+        make_record([DOC_B], SUCCESS_B, "tool_a"),                       # wrong tool
+        make_record([DOC_T], SUCCESS_A, "tool_a", test_doc=DOC_T),       # ignored
+    ]
+    assert accuracy(records) == pytest.approx(0.5)
