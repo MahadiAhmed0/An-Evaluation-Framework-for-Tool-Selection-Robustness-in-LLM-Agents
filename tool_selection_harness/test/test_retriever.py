@@ -155,3 +155,42 @@ def test_top_k_scores_sorted_descending(
     results = retriever.top_k(QUERIES["calendar"], library, k=4)
     scores = [score for _, score in results]
     assert scores == sorted(scores, reverse=True)
+
+def test_top_k_respects_k(retriever: Retriever, library: ToolLibrary) -> None:
+    results = retriever.top_k(QUERIES["weather"], library, k=1)
+    assert len(results) == 1
+    assert results[0][0].tool_name == "weather_tool"
+
+
+def test_top_k_dot_metric_ranks_weather_first(
+    retriever: Retriever, library: ToolLibrary
+) -> None:
+    results = retriever.top_k(QUERIES["weather"], library, k=1, metric="dot")
+    assert results[0][0].tool_name == "weather_tool"
+
+
+def test_top_k_larger_than_library_returns_all(
+    retriever: Retriever, library: ToolLibrary
+) -> None:
+    results = retriever.top_k(QUERIES["weather"], library, k=100)
+    assert len(results) == len(library)
+
+
+def test_top_k_empty_library_returns_empty(retriever: Retriever) -> None:
+    assert retriever.top_k("any query", ToolLibrary(), k=5) == []
+
+
+def test_top_k_zero_k_returns_empty(retriever: Retriever, library: ToolLibrary) -> None:
+    assert retriever.top_k(QUERIES["weather"], library, k=0) == []
+
+
+def test_top_k_negative_k_raises(retriever: Retriever, library: ToolLibrary) -> None:
+    with pytest.raises(ValueError):
+        retriever.top_k(QUERIES["weather"], library, k=-1)
+
+
+def test_top_k_unknown_metric_raises(
+    retriever: Retriever, library: ToolLibrary
+) -> None:
+    with pytest.raises(ValueError):
+        retriever.top_k(QUERIES["weather"], library, k=3, metric="euclidean")
