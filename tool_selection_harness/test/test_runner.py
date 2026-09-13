@@ -136,3 +136,77 @@ def test_run_computes_metrics(
         "unknown_tool": 0,
         "refused": 0,
     }
+
+def test_run_config_metadata(
+    library: ToolLibrary,
+    retriever: FakeRetriever,
+    selector: FakeSelector,
+    queries: List[Tuple[str, str]],
+) -> None:
+    runner = BenchmarkRunner(
+        library=library, retriever=retriever, selector=selector, queries=queries, k=5
+    )
+    config = runner.run()["config"]
+    assert config == {"k": 5, "num_queries": 3, "test_document": None}
+
+
+def test_run_with_test_document(
+    library: ToolLibrary,
+    selector: FakeSelector,
+    queries: List[Tuple[str, str]],
+) -> None:
+    retriever = FakeRetriever(
+        {
+            "q1": ["tool_a", "tool_t"],
+            "q2": ["tool_t", "tool_b"],
+            "q3": ["tool_c", "tool_a"],
+        }
+    )
+    selector = FakeSelector(
+        {
+            "q1": SelectionResult("tool_t", '{"select_tool": "tool_t"}', "success"),
+            "q2": SelectionResult("tool_b", '{"select_tool": "tool_b"}', "success"),
+            "q3": SelectionResult("tool_c", '{"select_tool": "tool_c"}', "success"),
+        }
+    )
+    runner = BenchmarkRunner(
+        library=library,
+        retriever=retriever,
+        selector=selector,
+        queries=queries,
+        k=2,
+        test_document=DOC_T,
+    )
+    results = runner.run()
+
+    config = results["config"]
+    assert config["test_document"]["tool_name"] == "tool_t"
+    assert config["test_document"]["tool_description"] == "test document variant"
+
+    # All records belong to the injection pass; accuracy denominator is empty.
+    metrics = results["metrics"]
+    assert metrics["accuracy"] == 0.0
+    assert metrics["hit_rate_at_k"] == pytest.approx(1.0)
+    assert metrics["target_selection_rate"] == pytest.approx(1 / 3)
+    assert metrics["target_retrieval_rate"] == pytest.approx(2 / 3)
+
+    assert all(r["test_document"]["tool_name"] == "tool_t" for r in results["records"])
+
+
+def test_run_does_not_mutate_baseline_library(
+    library: ToolLibrary,
+    retriever: FakeRetriever,
+    selector: FakeSelector,
+    queries: List[Tuple[str, str]],
+) -> None:
+    runner = BenchmarkRunner(
+        library=library,
+        retriever=retriever,
+        selector=selector,
+        queries=queries,
+        k=2,
+        test_document=DOC_T,
+    )
+    runner.run()
+    assert len(library) == 3
+    assert library.get("tool_t") is None
