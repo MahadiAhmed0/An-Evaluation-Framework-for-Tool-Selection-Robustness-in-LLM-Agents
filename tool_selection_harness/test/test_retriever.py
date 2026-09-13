@@ -83,3 +83,21 @@ def library() -> ToolLibrary:
     return ToolLibrary(
         documents=[ToolDocument(name, desc) for name, desc in DOCS.items()]
     )
+# -- similarity -------------------------------------------------------------
+
+
+def test_cosine_identical_vectors_are_one(retriever: Retriever) -> None:
+    vec = np.array([1.0, 2.0, 3.0])
+    assert retriever.similarity(vec, vec) == pytest.approx(1.0)
+
+
+def test_cosine_orthogonal_vectors_are_zero(retriever: Retriever) -> None:
+    assert retriever.similarity(
+        np.array([1.0, 0.0]), np.array([0.0, 1.0])
+    ) == pytest.approx(0.0)
+
+
+def test_cosine_zero_vector_is_zero(retriever: Retriever) -> None:
+    assert retriever.similarity(
+        np.zeros(3), np.array([1.0, 1.0, 1.0])
+    ) == pytest.approx(0.0)
