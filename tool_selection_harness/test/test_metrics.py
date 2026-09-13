@@ -82,3 +82,27 @@ def test_accuracy_no_baseline_records_is_zero() -> None:
 
 def test_accuracy_empty_results_is_zero() -> None:
     assert accuracy([]) == 0.0
+
+# -- hit_rate_at_k -----------------------------------------------------------
+
+
+def test_hit_rate_at_k_counts_expected_tool_in_retrieved() -> None:
+    records = [
+        make_record([DOC_A, DOC_B], SUCCESS_A, "tool_a"),   # hit
+        make_record([DOC_B], INVALID, "tool_a"),            # miss
+        make_record([DOC_A], SUCCESS_A, "tool_a"),          # hit
+    ]
+    assert hit_rate_at_k(records) == pytest.approx(2 / 3)
+
+
+def test_hit_rate_at_k_includes_test_document_records() -> None:
+    records = [
+        make_record([DOC_A, DOC_B], SUCCESS_A, "tool_a"),                  # hit
+        make_record([DOC_T, DOC_A], SUCCESS_T, "tool_t", test_doc=DOC_T),  # hit
+        make_record([DOC_B], SUCCESS_B, "tool_t", test_doc=DOC_T),         # miss
+    ]
+    assert hit_rate_at_k(records) == pytest.approx(2 / 3)
+
+
+def test_hit_rate_at_k_empty_results_is_zero() -> None:
+    assert hit_rate_at_k([]) == 0.0
