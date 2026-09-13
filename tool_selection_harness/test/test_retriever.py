@@ -194,3 +194,33 @@ def test_top_k_unknown_metric_raises(
 ) -> None:
     with pytest.raises(ValueError):
         retriever.top_k(QUERIES["weather"], library, k=3, metric="euclidean")
+
+# -- caching ----------------------------------------------------------------
+
+
+def test_document_embeddings_are_cached(
+    retriever: Retriever, embedder: BagEmbedder, library: ToolLibrary
+) -> None:
+    retriever.top_k(QUERIES["weather"], library, k=4)
+    calls_after_first = embedder.call_count  # 4 docs + 1 query
+
+    retriever.top_k(QUERIES["weather"], library, k=4)
+    # Only the query is re-embedded; all four documents hit the cache.
+    assert embedder.call_count == calls_after_first + 1
+
+
+def test_cache_reused_across_injected_library(
+    retriever: Retriever, embedder: BagEmbedder, library: ToolLibrary
+) -> None:
+    retriever.top_k(QUERIES["weather"], library, k=4)
+    calls_before = embedder.call_count
+
+    injected = ToolDocument("new_tool", "Fetch weather forecast hourly")
+    modified = library.inject(injected)
+    results = retriever.top_k(QUERIES["weather"], modified, k=5)
+
+    # Only the injected document (plus the query) is newly embedded; the
+    # four baseline documents come from the cache.
+    assert embedder.call_count == calls_before + 2
+    assert len(results) == 5
+    assert results[0][0].tool_name == "new_tool"
