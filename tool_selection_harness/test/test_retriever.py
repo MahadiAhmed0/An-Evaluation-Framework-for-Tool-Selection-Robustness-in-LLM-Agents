@@ -124,3 +124,34 @@ def test_embed_document_concatenates_name_and_description(
     assert embedder.seen_texts[-1] == (
         "weather_tool: Fetch current weather conditions city"
     )
+
+# -- top_k ordering ---------------------------------------------------------
+
+
+def test_top_k_weather_query_ranks_weather_first(
+    retriever: Retriever, library: ToolLibrary
+) -> None:
+    results = retriever.top_k(QUERIES["weather"], library, k=4)
+    names = [doc.tool_name for doc, _ in results]
+    assert names[0] == "weather_tool"
+    assert names == ["weather_tool", "calendar_tool", "translate_text", "calculate"]
+    assert results[0][1] > 0.0
+    assert all(score == pytest.approx(0.0) for _, score in results[1:])
+
+
+def test_top_k_calendar_query_ranks_calendar_first(
+    retriever: Retriever, library: ToolLibrary
+) -> None:
+    results = retriever.top_k(QUERIES["calendar"], library, k=4)
+    names = [doc.tool_name for doc, _ in results]
+    assert names[0] == "calendar_tool"
+    assert names == ["calendar_tool", "weather_tool", "translate_text", "calculate"]
+    assert results[0][1] > results[1][1]
+
+
+def test_top_k_scores_sorted_descending(
+    retriever: Retriever, library: ToolLibrary
+) -> None:
+    results = retriever.top_k(QUERIES["calendar"], library, k=4)
+    scores = [score for _, score in results]
+    assert scores == sorted(scores, reverse=True)
