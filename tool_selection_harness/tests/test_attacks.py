@@ -14,6 +14,7 @@ import pytest
 
 from tool_selection_harness.core import Selector, ToolDocument
 from tool_selection_harness.core.attacks import (
+    GradientRetrievalOptimizer,
     GradientSelectionOptimizer,
     generate_retrieval_sequence,
     manual_attack_documents,
@@ -319,3 +320,91 @@ def test_selection_optimizer_suffix_mid_prompt(monkeypatch) -> None:
     assert result.strip()
     # Only the suffix span is returned -- trailer text must not leak in.
     assert "strict" not in result.lower()
+
+
+# -- gradient-based retrieval (Eq. 6) ----------------------------------------------
+
+
+def test_minilm_adapter_accepts_tensor_ids(monkeypatch) -> None:
+    """The MiniLM adapter returns (pooled, input_embeds) for HotFlip."""
+    from tool_selection_harness.core.attacks import MiniLMDiffEmbedder
+
+    class StubAutoModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embedding = torch.nn.Embedding(8, 4)
+
+        def get_input_embeddings(self):
+            return self.embedding
+
+        def forward(self, input_ids=None, inputs_embeds=None, **kwargs):
+            embeds = (
+                inputs_embeds
+                if inputs_embeds is not None
+                else self.embedding(input_ids)
+            )
+            return SimpleNamespace(last_hidden_state=embeds)
+
+    class StubTokenizer:
+        def __call__(self, text, add_special_tokens=False):
+            return {"input_ids": [1, 2, 3]}
+
+        def decode(self, ids, skip_special_tokens=False):
+            return " ".join(map(str, ids))
+
+    class StubModule:
+        def __init__(self):
+            self.auto_model = StubAutoModel()
+
+    class StubSentenceTransformer:
+        def __init__(self, name):
+            self.tokenizer = StubTokenizer()
+            self._modules = [StubModule()]
+
+        def __getitem__(self, index):
+            return self._modules[index]
+
+    fake = SimpleNamespace(SentenceTransformer=StubSentenceTransformer)
+    monkeypatch.setitem(__import__("sys").modules, "sentence_transformers", fake)
+
+    adapter = MiniLMDiffEmbedder()
+    pooled, embeds = adapter.embed_ids(torch.tensor([[1, 2, 3]]))
+    assert tuple(pooled.shape) == (1, 4)
+    assert tuple(embeds.shape) == (1, 3, 4)
+    pooled_list, embeds_list = adapter.embed_ids([1, 2, 3])
+    assert tuple(pooled_list.shape) == (1, 4)
+    assert tuple(embeds_list.shape) == (1, 3, 4)
+
+
+def test_retrieval_optimizer_smoke() -> None:
+    torch.manual_seed(1)
+    random.seed(1)
+    vocab = ["what", "is", "weather", "paris", "sunny", "city", "fetch", "report"]
+    index = {w: i for i, w in enumerate(vocab)}
+    embedding = torch.nn.Embedding(len(vocab), 16)
+
+    def embed_ids(ids: List[int]):
+        embeds = embedding(torch.tensor(ids, dtype=torch.long))
+        return embeds.mean(dim=1), embeds
+
+    def tokenize(text: str) -> List[int]:
+        return [index.get(w, 0) for w in text.split()]
+
+    def decode(ids: List[int]) -> str:
+        return " ".join(vocab[i] for i in ids)
+
+    optimizer = GradientRetrievalOptimizer(
+        embed_ids=embed_ids,
+        vocab_size=len(vocab),
+        token_embeddings=embedding.weight.detach(),
+        tokenize=tokenize,
+        decode=decode,
+    )
+    result = optimizer.optimize(
+        queries=["what is weather", "sunny city"],
+        initial_text="fetch report",
+        iterations=3,
+        flip_candidates=4,
+    )
+    assert isinstance(result, str)
+    assert result.strip()
