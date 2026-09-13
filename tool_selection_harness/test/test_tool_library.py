@@ -80,3 +80,27 @@ def test_get_and_contains(library: ToolLibrary, doc_a: ToolDocument) -> None:
     assert library.get("missing") is None
     assert "tool_a" in library
     assert "missing" not in library
+
+# -- inject: copy-on-write semantics --------------------------------------
+
+
+def test_inject_returns_copy_not_mutation(library: ToolLibrary) -> None:
+    injected_doc = ToolDocument("injected", "Suspicious tool description")
+    modified = library.inject(injected_doc)
+
+    # Original library must be untouched.
+    assert len(library) == 2
+    assert library.get("injected") is None
+
+    # Modified library contains the injected document.
+    assert len(modified) == 3
+    assert modified.get("injected") == injected_doc
+    assert modified.names() == ["tool_a", "tool_b", "injected"]
+
+
+def test_inject_twice_does_not_accumulate_on_original(library: ToolLibrary) -> None:
+    first = library.inject(ToolDocument("inj_1", "first"))
+    second = first.inject(ToolDocument("inj_2", "second"))
+    assert library.names() == ["tool_a", "tool_b"]
+    assert first.names() == ["tool_a", "tool_b", "inj_1"]
+    assert second.names() == ["tool_a", "tool_b", "inj_1", "inj_2"]
