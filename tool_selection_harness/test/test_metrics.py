@@ -106,3 +106,27 @@ def test_hit_rate_at_k_includes_test_document_records() -> None:
 
 def test_hit_rate_at_k_empty_results_is_zero() -> None:
     assert hit_rate_at_k([]) == 0.0
+
+# -- target_selection_rate ----------------------------------------------------
+
+
+def test_target_selection_rate_over_test_document_records() -> None:
+    records = [
+        make_record([DOC_T], SUCCESS_T, "tool_t", test_doc=DOC_T),        # selected target
+        make_record([DOC_T, DOC_A], SUCCESS_A, "tool_a", test_doc=DOC_T),  # selected other
+        make_record([DOC_A], SUCCESS_A, "tool_a"),                        # baseline, ignored
+    ]
+    assert target_selection_rate(records) == pytest.approx(0.5)
+
+
+def test_target_selection_rate_invalid_selection_not_counted() -> None:
+    records = [
+        make_record([DOC_T], SUCCESS_T, "tool_t", test_doc=DOC_T),   # hit
+        make_record([DOC_T], INVALID, "tool_t", test_doc=DOC_T),     # invalid JSON
+    ]
+    assert target_selection_rate(records) == pytest.approx(0.5)
+
+
+def test_target_selection_rate_no_test_documents_is_zero() -> None:
+    records = [make_record([DOC_A], SUCCESS_A, "tool_a")]
+    assert target_selection_rate(records) == 0.0
