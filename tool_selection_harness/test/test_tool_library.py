@@ -44,3 +44,39 @@ def test_document_rejects_blank_description() -> None:
 def test_document_is_frozen(doc_a: ToolDocument) -> None:
     with pytest.raises(Exception):
         doc_a.tool_name = "mutated"  # type: ignore[misc]
+
+
+@pytest.fixture
+def library(doc_a: ToolDocument, doc_b: ToolDocument) -> ToolLibrary:
+    return ToolLibrary(documents=[doc_a, doc_b])
+
+
+# -- ToolLibrary basics ----------------------------------------------------
+
+
+def test_add_returns_new_library_with_doc(
+    library: ToolLibrary, doc_b: ToolDocument
+) -> None:
+    bigger = library.add(doc_b)
+    assert len(library) == 2
+    assert len(bigger) == 3
+    assert bigger.names() == ["tool_a", "tool_b", "tool_b"]
+
+
+def test_remove_returns_new_library_without_doc(library: ToolLibrary) -> None:
+    smaller = library.remove("tool_a")
+    assert len(library) == 2
+    assert len(smaller) == 1
+    assert smaller.names() == ["tool_b"]
+
+
+def test_remove_missing_name_raises(library: ToolLibrary) -> None:
+    with pytest.raises(KeyError):
+        library.remove("does_not_exist")
+
+
+def test_get_and_contains(library: ToolLibrary, doc_a: ToolDocument) -> None:
+    assert library.get("tool_a") == doc_a
+    assert library.get("missing") is None
+    assert "tool_a" in library
+    assert "missing" not in library
