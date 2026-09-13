@@ -82,3 +82,52 @@ def test_app_generate_tools_with_mock() -> None:
     # 15 seed tools + 3 generated = 18; the count metric reflects it.
     metrics = [m.value for m in at.metric]
     assert "18" in metrics
+
+def test_app_auto_generate_queries() -> None:
+    """Regression: auto-generated queries appear in the benchmark text area."""
+    at = AppTest.from_file(str(APP), default_timeout=180)
+    at.run()
+    assert not at.exception
+
+    text_inputs = {t.label: t for t in at.text_input}
+    text_inputs["Target task"].set_value("checking the weather")
+    at.run()
+    assert not at.exception
+
+    buttons = {b.label: b for b in at.button}
+    buttons["Generate queries"].click()
+    at.run()
+    assert not at.exception
+
+    text_areas = {ta.label: ta for ta in at.text_area}
+    assert "checking the weather" in text_areas["One query per line"].value
+
+
+def test_app_attacks_tab_manual_baselines() -> None:
+    """Regression: the Attacks tab runs manual baselines offline."""
+    at = AppTest.from_file(str(APP), default_timeout=180)
+    at.run()
+    assert not at.exception
+
+    # Seed queries via the benchmark tab's auto-generation (mock LLM).
+    text_inputs = {t.label: t for t in at.text_input}
+    text_inputs["Target task"].set_value("checking the weather")
+    at.run()
+    buttons = {b.label: b for b in at.button}
+    buttons["Generate queries"].click()
+    at.run()
+    assert not at.exception
+
+    # The Attacks tab's backend selectbox is the last "Embedding backend".
+    selectboxes = {sb.label: sb for sb in at.selectbox}
+    selectboxes["Embedding backend"].set_value("Offline hashing (no download)")
+    at.run()
+    assert not at.exception
+
+    buttons = {b.label: b for b in at.button}
+    buttons["Run manual baselines"].click()
+    at.run()
+    assert not at.exception
+
+    dataframes = [df.value for df in at.get("dataframe")]
+    assert any("method" in df.columns and "ASR" in df.columns for df in dataframes)
