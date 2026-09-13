@@ -56,8 +56,27 @@ ROOT = Path(__file__).resolve().parent
 SAMPLE_TOOLS = ROOT / "tool_selection_harness" / "data" / "sample_tools.json"
 HISTORY_DIR = ROOT / "benchmark_history"
 
-EMBEDDING_BACKENDS = ("MiniLM (sentence-transformers)", "Offline hashing (no download)")
+SETTINGS_FILE = ROOT / "settings.json"
+
+BUILTIN_EMBEDDING_BACKENDS = (
+    "MiniLM (sentence-transformers)",
+    "Offline hashing (no download)",
+)
 LLM_PROVIDERS = ("Mock (offline)", "OpenAI", "Anthropic")
+
+COMMON_EMBEDDING_MODELS = (
+    "all-MiniLM-L6-v2",
+    "all-mpnet-base-v2",
+    "multi-qa-mpnet-base-dot-v1",
+    "BAAI/bge-small-en-v1.5",
+    "intfloat/e5-small-v2",
+    "thenlper/gte-small",
+)
+
+DEFAULT_SELECTOR_MODELS = {
+    "OpenAI": ("gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"),
+    "Anthropic": ("claude-3-5-haiku-latest", "claude-3-5-sonnet-latest"),
+}
 
 st.set_page_config(page_title="Tool-Selection Harness", layout="wide")
 
@@ -79,10 +98,25 @@ def load_offline_retriever() -> Retriever:
     return Retriever(embed_fn=hashing_embedder())
 
 
+@st.cache_resource(show_spinner=False)
+def load_custom_retriever(model_name: str) -> Retriever:
+    """Any sentence-transformers-compatible Hugging Face model."""
+    return Retriever(model_name=model_name)
+
+
 def get_retriever(backend: str) -> Retriever:
     if backend.startswith("MiniLM"):
         return load_minilm_retriever()
-    return load_offline_retriever()
+    if backend.startswith("Offline"):
+        return load_offline_retriever()
+    return load_custom_retriever(backend)
+
+
+def get_embedding_backends() -> List[str]:
+    """Built-in backends plus user-added embedding models from settings."""
+    return list(BUILTIN_EMBEDDING_BACKENDS) + list(
+        st.session_state.settings["embedding_models"]
+    )
 
 
 @st.cache_resource(show_spinner=False)
@@ -188,7 +222,7 @@ def _mock_llm_call(prompt: str) -> str:
 
 
 @st.cache_resource(show_spinner=False)
-def make_llm(provider: str, api_key: str) -> Callable[[str], str]:
+def make_llm(provider: str, api_key: str, model: str) -> Callable[[str], str]:
     """Build a prompt -> text callable for the selected provider."""
     if provider == "OpenAI":
         from openai import OpenAI
@@ -197,7 +231,7 @@ def make_llm(provider: str, api_key: str) -> Callable[[str], str]:
 
         def call_openai(prompt: str) -> str:
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=model or "gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
             )
             return response.choices[0].message.content
@@ -211,7 +245,7 @@ def make_llm(provider: str, api_key: str) -> Callable[[str], str]:
 
         def call_anthropic(prompt: str) -> str:
             message = client.messages.create(
-                model="claude-3-5-haiku-latest",
+                model=model or "claude-3-5-haiku-latest",
                 max_tokens=1024,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -253,12 +287,15 @@ def cached_scores(
     window_size: int,
     provider: str,
     api_key: str,
+    model: str,
 ) -> Dict:
     """Detector scores for benign documents + optional test documents."""
     try:
         docs = json.loads(docs_json)
         if detector_kind.startswith("Known-answer"):
-            detector = KnownAnswerDetector(llm_call=make_llm(provider, api_key))
+            detector = KnownAnswerDetector(
+                llm_call=make_llm(provider, api_key, model)
+            )
         elif detector_kind.startswith("PPL-W"):
             detector = PerplexityWindowedDetector(window_size=window_size)
         else:
@@ -284,6 +321,58 @@ def cached_scores(
         return {"benign": benign, "tests": tests}
     except (ImportError, OSError, RuntimeError) as exc:
         return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Settings (user-added retriever / selector models)
+# ---------------------------------------------------------------------------
+
+
+def _default_settings() -> dict:
+    return {
+        "embedding_models": [],
+        "selector_models": {"OpenAI": [], "Anthropic": []},
+    }
+
+
+def load_settings() -> dict:
+    """Read persisted model settings; missing file or fields get defaults."""
+    settings = _default_settings()
+    try:
+        payload = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return settings
+    settings["embedding_models"] = [
+        str(m).strip()
+        for m in payload.get("embedding_models", [])
+        if str(m).strip()
+    ]
+    for provider in settings["selector_models"]:
+        settings["selector_models"][provider] = [
+            str(m).strip()
+            for m in payload.get("selector_models", {}).get(provider, [])
+            if str(m).strip()
+        ]
+    return settings
+
+
+def save_settings() -> None:
+    """Persist the current model settings to disk."""
+    SETTINGS_FILE.write_text(
+        json.dumps(st.session_state.settings, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def available_selector_models(provider: str) -> List[str]:
+    """Default models plus user-added models for one LLM provider."""
+    defaults = list(DEFAULT_SELECTOR_MODELS[provider])
+    custom = [
+        m
+        for m in st.session_state.settings["selector_models"].get(provider, [])
+        if m not in defaults
+    ]
+    return defaults + custom
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +402,12 @@ def _init_state() -> None:
             st.session_state[key] = value
     if st.session_state.library_docs is None:
         st.session_state.library_docs = _default_library_docs()
+    if "settings" not in st.session_state:
+        st.session_state.settings = load_settings()
+        if not SETTINGS_FILE.exists():
+            save_settings()
+    st.session_state.setdefault("llm_model_selection", {})
+    st.session_state.setdefault("llm_call_args", ("Mock (offline)", "", ""))
     # Seed the benchmark text area widget state (single source of truth;
     # set before any widget is instantiated so it is allowed).
     st.session_state.setdefault(
@@ -352,14 +447,30 @@ def render_sidebar() -> None:
         if provider == "Mock (offline)":
             st.caption("Deterministic offline mock; no network calls.")
             api_key = ""
+            model = ""
         else:
+            models = available_selector_models(provider)
+            selection = st.session_state.llm_model_selection.setdefault(
+                provider, models[0]
+            )
+            if selection not in models:
+                selection = models[0]
+            model = st.selectbox(
+                "Model",
+                models,
+                index=models.index(selection),
+                key=f"llm_model_{provider}",
+            )
+            st.session_state.llm_model_selection[provider] = model
             api_key = st.text_input(
                 f"{provider} API key",
                 type="password",
                 key="llm_api_key",
                 help="Used to initialize the provider client at run time.",
             )
-        st.session_state.llm_call_args = (provider, api_key)
+        st.session_state.llm_call_args = (provider, api_key, model)
+        st.divider()
+        render_model_settings()
         st.divider()
         st.caption(
             "Defensive benchmarking UI for tool-selection robustness. "
@@ -367,9 +478,98 @@ def render_sidebar() -> None:
         )
 
 
+def render_model_settings() -> None:
+    """Sidebar section to add/remove retriever and selector models."""
+    settings = st.session_state.settings
+    with st.expander("Model settings"):
+        st.markdown("**Embedding models (retriever)**")
+        for name in settings["embedding_models"]:
+            col_name, col_btn = st.columns([4, 1])
+            col_name.caption(name)
+            if col_btn.button("Remove", key=f"rm_embed_{name}"):
+                settings["embedding_models"].remove(name)
+                save_settings()
+                st.rerun()
+        if not settings["embedding_models"]:
+            st.caption(
+                "Built-ins: " + ", ".join(BUILTIN_EMBEDDING_BACKENDS)
+            )
+        with st.form("add_embedding_model", clear_on_submit=True):
+            st.selectbox(
+                "Pick a common model",
+                ("",) + COMMON_EMBEDDING_MODELS,
+                key="add_embed_pick",
+                help="Popular sentence-transformers models.",
+            )
+            st.text_input(
+                "Or any Hugging Face model name",
+                key="add_embed_custom",
+                placeholder="intfloat/e5-small-v2",
+            )
+            if st.form_submit_button("Add embedding model"):
+                name = (
+                    st.session_state.add_embed_custom.strip()
+                    or st.session_state.add_embed_pick
+                    or ""
+                ).strip()
+                if not name:
+                    st.warning("Enter a model name or pick a common model.")
+                elif (
+                    name in BUILTIN_EMBEDDING_BACKENDS
+                    or name in settings["embedding_models"]
+                ):
+                    st.warning(f"{name!r} is already available.")
+                else:
+                    settings["embedding_models"].append(name)
+                    save_settings()
+                    st.rerun()
+
+        st.markdown("**Selector models (LLM)**")
+        for prov in DEFAULT_SELECTOR_MODELS:
+            for name in settings["selector_models"][prov]:
+                col_name, col_btn = st.columns([4, 1])
+                col_name.caption(f"{prov}: {name}")
+                if col_btn.button("Remove", key=f"rm_sel_{prov}_{name}"):
+                    settings["selector_models"][prov].remove(name)
+                    save_settings()
+                    st.rerun()
+        if not any(settings["selector_models"].values()):
+            st.caption(
+                "Built-ins - OpenAI: "
+                + ", ".join(DEFAULT_SELECTOR_MODELS["OpenAI"])
+                + "; Anthropic: "
+                + ", ".join(DEFAULT_SELECTOR_MODELS["Anthropic"])
+            )
+        with st.form("add_selector_model", clear_on_submit=True):
+            st.selectbox(
+                "Provider",
+                list(DEFAULT_SELECTOR_MODELS),
+                key="add_sel_provider",
+            )
+            st.text_input(
+                "Model name",
+                key="add_sel_model",
+                placeholder="gpt-4o",
+            )
+            if st.form_submit_button("Add selector model"):
+                prov = st.session_state.add_sel_provider
+                name = st.session_state.add_sel_model.strip()
+                if not name:
+                    st.warning("Enter a model name.")
+                elif (
+                    name in DEFAULT_SELECTOR_MODELS[prov]
+                    or name in settings["selector_models"][prov]
+                ):
+                    st.warning(f"{name!r} is already available.")
+                else:
+                    settings["selector_models"][prov].append(name)
+                    save_settings()
+                    st.rerun()
+
+
 def current_llm_call() -> Callable[[str], str]:
-    provider, api_key = st.session_state.llm_call_args
-    return make_llm(provider, api_key)
+    provider, api_key, model = st.session_state.llm_call_args
+    return make_llm(provider, api_key, model)
 
 
 # ---------------------------------------------------------------------------
@@ -607,16 +807,20 @@ def _on_generate_queries() -> None:
 
 def render_benchmark_tab() -> None:
     st.subheader("Run Benchmark")
-    provider, _ = st.session_state.llm_call_args
+    provider, _, selector_model = st.session_state.llm_call_args
     st.markdown("**Configuration**")
     col1, col2, col3 = st.columns(3)
     with col1:
-        backend = st.selectbox("Embedding backend", EMBEDDING_BACKENDS)
+        backend = st.selectbox("Embedding backend", get_embedding_backends())
     with col2:
         metric = st.selectbox("Similarity metric", ("cosine", "dot"))
     with col3:
         k = st.slider("Top-k candidates", min_value=1, max_value=10, value=3)
-    st.caption(f"Selector LLM backend: {provider} (configure in the sidebar).")
+    model_note = f" ({selector_model})" if selector_model else ""
+    st.caption(
+        f"Selector LLM backend: {provider}{model_note} "
+        "(configure in the sidebar)."
+    )
 
     st.markdown("**Evaluation queries**")
     query_col, gen_col = st.columns([2, 1])
@@ -896,7 +1100,7 @@ def render_attacks_tab() -> None:
         k = st.slider("Top-k", min_value=1, max_value=10, value=5, key="attack_k")
     with col3:
         backend = st.selectbox(
-            "Embedding backend", EMBEDDING_BACKENDS, key="attack_backend"
+            "Embedding backend", get_embedding_backends(), key="attack_backend"
         )
 
     names = [d["tool_name"] for d in st.session_state.library_docs]
@@ -1159,7 +1363,7 @@ def render_detection_tab() -> None:
                 )
             )
 
-    provider, api_key = st.session_state.llm_call_args
+    provider, api_key, model = st.session_state.llm_call_args
     fingerprint = (
         _docs_json(st.session_state.library_docs),
         json.dumps(test_docs),
@@ -1167,6 +1371,7 @@ def render_detection_tab() -> None:
         window_size,
         provider,
         api_key,
+        model,
     )
     stored = st.session_state.detection
     stale = stored is None or stored.get("fingerprint") != fingerprint
@@ -1180,6 +1385,7 @@ def render_detection_tab() -> None:
                 window_size,
                 provider,
                 api_key,
+                model,
             )
         if "error" in payload:
             st.warning(f"Detector unavailable: {payload['error']}")
