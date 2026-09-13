@@ -153,3 +153,46 @@ def test_target_retrieval_rate_requires_exact_match() -> None:
 def test_target_retrieval_rate_no_test_documents_is_zero() -> None:
     records = [make_record([DOC_A], SUCCESS_A, "tool_a")]
     assert target_retrieval_rate(records) == 0.0
+
+# -- status_breakdown ----------------------------------------------------------
+
+
+def test_status_breakdown_counts_all_statuses() -> None:
+    records = [
+        make_record([DOC_A], SUCCESS_A, "tool_a"),
+        make_record([DOC_A], SUCCESS_B, "tool_a"),
+        make_record([DOC_A], INVALID, "tool_a"),
+        make_record([DOC_A], UNKNOWN, "tool_a"),
+    ]
+    breakdown = status_breakdown(records)
+    assert breakdown == {
+        "success": 2,
+        "invalid_json": 1,
+        "unknown_tool": 1,
+        "refused": 0,
+    }
+
+
+def test_status_breakdown_empty_results() -> None:
+    assert status_breakdown([]) == {
+        "success": 0,
+        "invalid_json": 0,
+        "unknown_tool": 0,
+        "refused": 0,
+    }
+
+
+# -- compute_all ----------------------------------------------------------------
+
+
+def test_compute_all_returns_all_metric_keys() -> None:
+    records = [make_record([DOC_A], SUCCESS_A, "tool_a")]
+    metrics = compute_all(records)
+    assert set(metrics) == {
+        "accuracy",
+        "hit_rate_at_k",
+        "target_selection_rate",
+        "target_retrieval_rate",
+    }
+    assert metrics["accuracy"] == 1.0
+    assert metrics["hit_rate_at_k"] == 1.0
