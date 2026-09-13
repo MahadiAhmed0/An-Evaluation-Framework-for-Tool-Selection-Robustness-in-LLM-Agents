@@ -124,3 +124,35 @@ def test_case_sensitive_name_mismatch_is_unknown_tool(
 ) -> None:
     result, _ = select_with('{"select_tool": "WEATHER_TOOL"}', candidates)
     assert result.status == "unknown_tool"
+
+# -- refusal cases -----------------------------------------------------------
+
+
+def test_refusal_text_is_refused(candidates: List[ToolDocument]) -> None:
+    response = "I'm sorry, but I cannot assist with that request."
+    result, _ = select_with(response, candidates)
+    assert result.status == "refused"
+    assert result.selected_tool_name is None
+
+
+def test_refusal_text_case_insensitive(candidates: List[ToolDocument]) -> None:
+    response = "As an AI, I CANNOT COMPLY with this request."
+    result, _ = select_with(response, candidates)
+    assert result.status == "refused"
+
+
+# -- prompt rendering --------------------------------------------------------
+
+
+def test_prompt_contains_query_and_tool_lines(candidates: List[ToolDocument]) -> None:
+    llm = CannedLLM('{"select_tool": "weather_tool"}')
+    selector = Selector(llm_call=llm)
+    selector.select(QUERY, candidates)
+
+    prompt = llm.prompts[0]
+    assert QUERY in prompt
+    assert "tool_name: weather_tool, tool_description: Fetch current weather conditions" in prompt
+    assert "tool_name: calendar_tool, tool_description: Add calendar event" in prompt
+    assert "tool_name: translate_text, tool_description: Translate text between languages" in prompt
+    assert "Choose exactly one tool from the provided list" in prompt
+    assert '{"select_tool": "tool_name"}' in prompt
