@@ -543,3 +543,62 @@ class GradientRetrievalOptimizer:
                 break
 
         return self.decode(current)
+
+
+class MiniLMDiffEmbedder:
+    """Best-effort differentiable adapter for sentence-transformers MiniLM.
+
+    ``embed_ids`` returns ``(pooled_vector, input_embeddings)``: the
+    mean-pooled last hidden state and the per-token input embeddings that
+    carry gradients for :class:`GradientRetrievalOptimizer` (paper Eq. 6).
+    Handles list or tensor token ids and follows the model's device.
+
+    Note: internal attribute paths vary across sentence-transformers
+    versions; if the expected structure is not found, a RuntimeError
+    explains that a custom adapter is required.
+    """
+
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as exc:  # pragma: no cover - depends on env
+            raise ImportError(
+                "MiniLMDiffEmbedder requires 'sentence-transformers'."
+            ) from exc
+        self.model = SentenceTransformer(model_name)
+        self.tokenizer = self.model.tokenizer
+        auto_model = getattr(self.model[0], "auto_model", None)
+        if auto_model is None:
+            raise RuntimeError(
+                "Could not locate the underlying transformer in this "
+                "sentence-transformers version; supply a custom embedder "
+                "to GradientRetrievalOptimizer instead."
+            )
+        self.auto_model = auto_model
+        self._word_embeddings = auto_model.get_input_embeddings()
+        self.word_embeddings = self._word_embeddings.weight.detach()
+        self.vocab_size = self.word_embeddings.shape[0]
+
+    def embed_ids(self, ids: List[int]):
+        """Return ``(mean_pooled_hidden, per_token_input_embeddings)``.
+
+        Accepts either a plain list of token ids or a tensor (any batch
+        shape is flattened to a single sequence). Token ids are placed on
+        the model's device (sentence-transformers may auto-load onto CUDA).
+        """
+        torch = _torch()
+        if isinstance(ids, torch.Tensor):
+            ids = ids.reshape(-1).tolist()
+        device = next(self.auto_model.parameters()).device
+        ids_t = torch.tensor([list(ids)], dtype=torch.long, device=device)
+        input_embeds = self._word_embeddings(ids_t)
+        input_embeds = input_embeds.detach().requires_grad_(True)
+        outputs = self.auto_model(inputs_embeds=input_embeds)
+        pooled = outputs.last_hidden_state.mean(dim=1)
+        return pooled, input_embeds
+
+    def tokenize(self, text: str) -> List[int]:
+        return self.tokenizer(text, add_special_tokens=False)["input_ids"]
+
+    def decode(self, ids: List[int]) -> str:
+        return self.tokenizer.decode(ids, skip_special_tokens=True)
