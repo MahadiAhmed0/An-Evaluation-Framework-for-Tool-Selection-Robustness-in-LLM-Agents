@@ -73,3 +73,37 @@ def test_whitespace_around_json_is_success(candidates: List[ToolDocument]) -> No
     result, _ = select_with(response, candidates)
     assert result.status == "success"
     assert result.selected_tool_name == "weather_tool"
+
+# -- invalid_json cases ------------------------------------------------------
+
+
+def test_malformed_json_is_invalid_json(candidates: List[ToolDocument]) -> None:
+    result, _ = select_with("definitely not JSON output here", candidates)
+    assert result.status == "invalid_json"
+    assert result.selected_tool_name is None
+    assert result.raw_output == "definitely not JSON output here"
+
+
+def test_missing_key_is_invalid_json(candidates: List[ToolDocument]) -> None:
+    result, _ = select_with('{"tool": "weather_tool"}', candidates)
+    assert result.status == "invalid_json"
+
+
+def test_non_string_value_is_invalid_json(candidates: List[ToolDocument]) -> None:
+    result, _ = select_with('{"select_tool": 42}', candidates)
+    assert result.status == "invalid_json"
+
+
+def test_empty_name_is_invalid_json(candidates: List[ToolDocument]) -> None:
+    result, _ = select_with('{"select_tool": ""}', candidates)
+    assert result.status == "invalid_json"
+
+
+def test_empty_response_is_invalid_json(candidates: List[ToolDocument]) -> None:
+    result, _ = select_with("", candidates)
+    assert result.status == "invalid_json"
+
+
+def test_json_list_is_invalid_json(candidates: List[ToolDocument]) -> None:
+    result, _ = select_with('["weather_tool"]', candidates)
+    assert result.status == "invalid_json"
