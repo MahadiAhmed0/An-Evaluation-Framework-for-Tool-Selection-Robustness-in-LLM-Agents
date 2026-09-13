@@ -104,3 +104,43 @@ def test_inject_twice_does_not_accumulate_on_original(library: ToolLibrary) -> N
     assert library.names() == ["tool_a", "tool_b"]
     assert first.names() == ["tool_a", "tool_b", "inj_1"]
     assert second.names() == ["tool_a", "tool_b", "inj_1", "inj_2"]
+
+SAMPLE_DATA = Path(__file__).resolve().parents[1] / "data" / "sample_tools.json"
+
+
+# -- JSON persistence -------------------------------------------------------
+
+
+def test_load_sample_tools() -> None:
+    library = ToolLibrary.load_json(SAMPLE_DATA)
+    assert len(library) == 15
+    assert "get_current_weather" in library
+    assert library.get("get_current_weather") is not None
+
+
+def test_save_and_load_roundtrip(tmp_path: Path) -> None:
+    docs = [
+        ToolDocument("t1", "desc one"),
+        ToolDocument("t2", "desc two", metadata={"cat": "y"}),
+    ]
+    library = ToolLibrary(documents=docs)
+    out_path = tmp_path / "tools.json"
+
+    library.save_json(out_path)
+
+    assert out_path.exists()
+    reloaded = ToolLibrary.load_json(out_path)
+    assert reloaded == library
+    assert reloaded.to_dicts() == library.to_dicts()
+
+
+def test_load_missing_file_raises() -> None:
+    with pytest.raises(FileNotFoundError):
+        ToolLibrary.load_json(Path("no_such_file.json"))
+
+
+def test_load_invalid_shape_raises(tmp_path: Path) -> None:
+    bad_path = tmp_path / "bad.json"
+    bad_path.write_text('{"not": "a list"}', encoding="utf-8")
+    with pytest.raises(ValueError):
+        ToolLibrary.load_json(bad_path)
