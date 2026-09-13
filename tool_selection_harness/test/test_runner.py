@@ -210,3 +210,68 @@ def test_run_does_not_mutate_baseline_library(
     runner.run()
     assert len(library) == 3
     assert library.get("tool_t") is None
+
+def test_run_empty_queries_returns_zero_metrics(
+    library: ToolLibrary, retriever: FakeRetriever, selector: FakeSelector
+) -> None:
+    runner = BenchmarkRunner(
+        library=library, retriever=retriever, selector=selector, queries=[], k=2
+    )
+    results = runner.run()
+    assert results["records"] == []
+    metrics = results["metrics"]
+    assert metrics["accuracy"] == 0.0
+    assert metrics["hit_rate_at_k"] == 0.0
+    assert metrics["selector_status_counts"]["success"] == 0
+
+
+# -- persistence --------------------------------------------------------------
+
+
+def test_save_json_roundtrip(
+    library: ToolLibrary,
+    retriever: FakeRetriever,
+    selector: FakeSelector,
+    queries: List[Tuple[str, str]],
+    tmp_path: Path,
+) -> None:
+    runner = BenchmarkRunner(
+        library=library, retriever=retriever, selector=selector, queries=queries, k=2
+    )
+    results = runner.run()
+    out_path = tmp_path / "results.json"
+
+    runner.save_json(out_path)
+
+    loaded = json.loads(out_path.read_text(encoding="utf-8"))
+    assert loaded == results
+    assert loaded["metrics"]["accuracy"] == pytest.approx(1 / 3)
+    assert len(loaded["records"]) == 3
+
+
+def test_save_json_accepts_explicit_results(
+    library: ToolLibrary,
+    retriever: FakeRetriever,
+    selector: FakeSelector,
+    queries: List[Tuple[str, str]],
+    tmp_path: Path,
+) -> None:
+    runner = BenchmarkRunner(
+        library=library, retriever=retriever, selector=selector, queries=queries, k=2
+    )
+    results = runner.run()
+    out_path = tmp_path / "explicit.json"
+    runner.save_json(out_path, results=results)
+    assert json.loads(out_path.read_text(encoding="utf-8")) == results
+
+
+def test_save_json_before_run_raises(tmp_path: Path) -> None:
+    runner = BenchmarkRunner(
+        library=ToolLibrary(documents=[DOC_A]),
+        retriever=FakeRetriever({}),
+        selector=FakeSelector({}),
+        queries=[],
+        k=2,
+    )
+    with pytest.raises(RuntimeError):
+        runner.save_json(tmp_path / "never.json")
