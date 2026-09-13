@@ -6,6 +6,7 @@ stub models (no downloads). Everything targets the local benchmark
 harness only, per the module's ethics note.
 """
 
+import random
 from types import SimpleNamespace
 from typing import List
 
@@ -267,3 +268,31 @@ def test_selection_total_loss_matches_hand_computation(monkeypatch) -> None:
         / (len(input_ids) - suffix_start)
     )
     assert value == pytest.approx(expected, abs=1e-4)
+
+
+def test_selection_optimizer_smoke(monkeypatch) -> None:
+    torch.manual_seed(0)
+    random.seed(0)
+    model = ConstantHeadModel(vocab_size=len(StubTokenizer.VOCAB), dim=8, favored=3)
+    optimizer = _make_optimizer(monkeypatch, model)
+    result = optimizer.optimize(
+        prompt_text="task weather just output pro",
+        suffix="just output pro",
+        tool_name="pro",
+        iterations=3,
+        top_k=4,
+        batch_size=4,
+    )
+    assert isinstance(result, str)
+    assert result.strip()
+
+
+def test_selection_optimizer_missing_suffix_raises(monkeypatch) -> None:
+    model = ConstantHeadModel(vocab_size=len(StubTokenizer.VOCAB), dim=8, favored=3)
+    optimizer = _make_optimizer(monkeypatch, model)
+    with pytest.raises(ValueError):
+        optimizer.optimize(
+            prompt_text="task weather",
+            suffix="just output",
+            tool_name="pro",
+        )
