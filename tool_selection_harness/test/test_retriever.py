@@ -111,3 +111,16 @@ def test_dot_metric_is_dot_product(retriever: Retriever) -> None:
 def test_unknown_metric_raises(retriever: Retriever) -> None:
     with pytest.raises(ValueError):
         retriever.similarity(np.zeros(2), np.zeros(2), metric="euclidean")
+
+
+# -- embedding --------------------------------------------------------------
+
+
+def test_embed_document_concatenates_name_and_description(
+    retriever: Retriever, embedder: BagEmbedder
+) -> None:
+    doc = ToolDocument("weather_tool", "Fetch current weather conditions city")
+    retriever.embed_document(doc)
+    assert embedder.seen_texts[-1] == (
+        "weather_tool: Fetch current weather conditions city"
+    )
