@@ -156,3 +156,17 @@ def test_prompt_contains_query_and_tool_lines(candidates: List[ToolDocument]) ->
     assert "tool_name: translate_text, tool_description: Translate text between languages" in prompt
     assert "Choose exactly one tool from the provided list" in prompt
     assert '{"select_tool": "tool_name"}' in prompt
+
+# -- input validation ---------------------------------------------------------
+
+
+def test_empty_candidates_raises() -> None:
+    selector = Selector(llm_call=CannedLLM("{}"))
+    with pytest.raises(ValueError):
+        selector.select(QUERY, [])
+
+
+def test_missing_llm_call_raises(candidates: List[ToolDocument]) -> None:
+    selector = Selector()
+    with pytest.raises(RuntimeError):
+        selector.select(QUERY, candidates)
