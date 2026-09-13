@@ -101,3 +101,13 @@ def test_cosine_zero_vector_is_zero(retriever: Retriever) -> None:
     assert retriever.similarity(
         np.zeros(3), np.array([1.0, 1.0, 1.0])
     ) == pytest.approx(0.0)
+
+def test_dot_metric_is_dot_product(retriever: Retriever) -> None:
+    a = np.array([1.0, 2.0])
+    b = np.array([3.0, 4.0])
+    assert retriever.similarity(a, b, metric="dot") == pytest.approx(11.0)
+
+
+def test_unknown_metric_raises(retriever: Retriever) -> None:
+    with pytest.raises(ValueError):
+        retriever.similarity(np.zeros(2), np.zeros(2), metric="euclidean")
