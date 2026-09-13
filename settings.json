@@ -1,0 +1,7 @@
+{
+  "embedding_models": [],
+  "selector_models": {
+    "OpenAI": [],
+    "Anthropic": []
+  }
+}
