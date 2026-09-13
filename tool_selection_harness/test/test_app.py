@@ -29,3 +29,56 @@ def test_app_shows_library_count() -> None:
     assert not at.exception
     metrics = [m.value for m in at.metric]
     assert any(m == "15" for m in metrics)
+
+def test_app_offline_benchmark_run() -> None:
+    """Run a benchmark end to end with offline backend + mock LLM."""
+    at = AppTest.from_file(str(APP), default_timeout=180)
+    at.run()
+    assert not at.exception
+
+    # All tab bodies execute on every run, so widgets are all reachable.
+    selectboxes = {sb.label: sb for sb in at.selectbox}
+    selectboxes["Embedding backend"].set_value("Offline hashing (no download)")
+    selectboxes["Expected tool for all queries (ground truth)"].set_value(
+        "get_current_weather"
+    )
+    at.run()
+    assert not at.exception
+
+    text_areas = {ta.label: ta for ta in at.text_area}
+    text_areas["One query per line"].set_value(
+        "What is the weather in Paris today?\nWill it rain tomorrow?"
+    )
+    at.run()
+    assert not at.exception
+
+    buttons = {b.label: b for b in at.button}
+    buttons["Run Benchmark"].click()
+    at.run()
+    assert not at.exception
+
+    metric_values = [m.value for m in at.metric]
+    assert any(m in ("n/a", "0.000", "0.500", "1.000") for m in metric_values)
+
+
+def test_app_generate_tools_with_mock() -> None:
+    """Regression: generating synthetic tools via the mock LLM works."""
+    at = AppTest.from_file(str(APP), default_timeout=180)
+    at.run()
+    assert not at.exception
+
+    text_areas = {ta.label: ta for ta in at.text_area}
+    text_areas[
+        "Context queries (one per line; used to shape the generated tools)"
+    ].set_value("check the weather in Dhaka\nwill it rain tomorrow?")
+    at.run()
+    assert not at.exception
+
+    buttons = {b.label: b for b in at.button}
+    buttons["Generate tools"].click()
+    at.run()
+    assert not at.exception
+
+    # 15 seed tools + 3 generated = 18; the count metric reflects it.
+    metrics = [m.value for m in at.metric]
+    assert "18" in metrics
