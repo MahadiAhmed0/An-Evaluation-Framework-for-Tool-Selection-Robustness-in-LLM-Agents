@@ -65,3 +65,20 @@ def test_accuracy_ignores_test_document_records() -> None:
         make_record([DOC_T], SUCCESS_A, "tool_a", test_doc=DOC_T),       # ignored
     ]
     assert accuracy(records) == pytest.approx(0.5)
+
+def test_accuracy_counts_only_successful_selections() -> None:
+    records = [
+        make_record([DOC_A], INVALID, "tool_a"),     # invalid JSON
+        make_record([DOC_A], UNKNOWN, "tool_a"),     # hallucinated tool
+        make_record([DOC_A], SUCCESS_A, "tool_a"),   # correct
+    ]
+    assert accuracy(records) == pytest.approx(1 / 3)
+
+
+def test_accuracy_no_baseline_records_is_zero() -> None:
+    records = [make_record([DOC_T], SUCCESS_T, "tool_t", test_doc=DOC_T)]
+    assert accuracy(records) == 0.0
+
+
+def test_accuracy_empty_results_is_zero() -> None:
+    assert accuracy([]) == 0.0
